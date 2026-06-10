@@ -63,8 +63,10 @@ def transformar_credor_limpo(df_bruto):
     return df_bruto
 
 # --- PROCESSAMENTO ---
+# --- PROCESSAMENTO ---
 if st.button("🚀 Processar Auditoria"):
     if all([file_nf, file_forn, file_painel, file_relacao, file_contrato]):
+        # Leitura dos arquivos garantindo conversão de tipos padrão do Pandas
         df_nf = pd.read_excel(file_nf) if file_nf.name.endswith('xlsx') else pd.read_csv(file_nf)
         df_forn_raw = pd.read_excel(file_forn, header=None) if file_forn.name.endswith('xlsx') else pd.read_csv(file_forn, header=None)
         df_painel = pd.read_excel(file_painel) if file_painel.name.endswith('xlsx') else pd.read_csv(file_painel)
@@ -73,81 +75,82 @@ if st.button("🚀 Processar Auditoria"):
 
         df_forn = transformar_credor_limpo(df_forn_raw)
         
-        # --- Definição das Colunas de Forma Segura ---
-        # CNPJ do Prestador/Emitente
-        if 'CNPJ Prestador (CNPJ)' in df_nf.columns:
-            NF_CNPJ = 'CNPJ Prestador (CNPJ)'
-        elif 'CNPJ emitente' in df_nf.columns:
-            NF_CNPJ = 'CNPJ emitente'
-        else:
-            NF_CNPJ = df_nf.columns[1] if len(df_nf.columns) > 1 else df_nf.columns[0]
-
-        # Número da Nota Fiscal
-        if 'Número NFS-e (nNFSe)' in df_nf.columns:
-            NF_NUMERO = 'Número NFS-e (nNFSe)'
-        elif 'Número/Série' in df_nf.columns:
-            NF_NUMERO = 'Número/Série'
-        else:
-            NF_NUMERO = df_nf.columns[11] if len(df_nf.columns) > 11 else df_nf.columns[0]
-
-        # Nome do Fornecedor / Emitente
-        if 'Nome Prestador (xNome)' in df_nf.columns:
-            NF_FORN = 'Nome Prestador (xNome)'
-        elif 'Emitente' in df_nf.columns:
-            NF_FORN = 'Emitente'
-        else:
-            NF_FORN = df_nf.columns[0]
-
-        # Data de Emissão
-        if 'Data/Hora Emissão DPS (dhEmi)' in df_nf.columns:
-            NF_DATA = 'Data/Hora Emissão DPS (dhEmi)'
-        elif 'Emissão' in df_nf.columns:
-            NF_DATA = 'Emissão'
-        else:
-            NF_DATA = df_nf.columns[9] if len(df_nf.columns) > 9 else df_nf.columns[0]
-
-        # Valor do Serviço / Valor da Nota
-        if 'Valor do Serviço (vServ) (vServ)' in df_nf.columns:
-            NF_VALOR = 'Valor do Serviço (vServ) (vServ)'
-        elif 'Valor' in df_nf.columns:
-            NF_VALOR = 'Valor'
-        else:
-            NF_VALOR = df_nf.columns[12] if len(df_nf.columns) > 12 else df_nf.columns[0]
+        # --- DEFINIÇÃO SEGURA DE COLUNAS (NF) ---
+        NF_CNPJ = 'CNPJ emitente' if 'CNPJ emitente' in df_nf.columns else ('CNPJ Prestador (CNPJ)' if 'CNPJ Prestador (CNPJ)' in df_nf.columns else df_nf.columns[1])
+        NF_NUMERO = 'Número/Série' if 'Número/Série' in df_nf.columns else ('Número NFS-e (nNFSe)' if 'Número NFS-e (nNFSe)' in df_nf.columns else df_nf.columns[11])
+        NF_FORN = 'Emitente' if 'Emitente' in df_nf.columns else ('Nome Prestador (xNome)' if 'Nome Prestador (xNome)' in df_nf.columns else df_nf.columns[0])
+        NF_DATA = 'Emissão' if 'Emissão' in df_nf.columns else ('Data/Hora Emissão DPS (dhEmi)' if 'Data/Hora Emissão DPS (dhEmi)' in df_nf.columns else df_nf.columns[9])
+        NF_VALOR = 'Valor' if 'Valor' in df_nf.columns else ('Valor do Serviço (vServ) (vServ)' if 'Valor do Serviço (vServ) (vServ)' in df_nf.columns else df_nf.columns[12])
         
-        df_nf[NF_CNPJ] = df_nf[NF_CNPJ].apply(limpar_cnpj)
-        df_nf['nf_limpa'] = df_nf[NF_NUMERO].astype(str).apply(lambda x: "".join(filter(str.isdigit, x.split('/')[0])).strip())
+        # Limpezas e Chaves Base na NF (Convertendo para string nativa para evitar falhas de Arrow)
+        df_nf[NF_CNPJ] = df_nf[NF_CNPJ].astype(str).apply(limpar_cnpj)
+        
+        def extrair_numero_nf_puro(x):
+            texto = str(x).strip()
+            if not texto or texto == "nan": return ""
+            # Divide na barra se houver (ex: 8750/1 vira 8750)
+            parte_antes_da_barra = texto.split('/')[0]
+            return "".join(filter(str.isdigit, parte_antes_da_barra)).strip()
+
+        df_nf['nf_limpa'] = df_nf[NF_NUMERO].apply(extrair_numero_nf_puro)
         df_nf['chave_unica'] = df_nf[NF_CNPJ] + "_" + df_nf['nf_limpa']
         
-        df_forn['CNPJCPF'] = df_forn['CNPJCPF'].apply(limpar_cnpj)
+        df_forn['CNPJCPF'] = df_forn['CNPJCPF'].astype(str).apply(limpar_cnpj)
         df_forn['Credor_UP'] = df_forn['Credor'].astype(str).str.strip().str.upper()
 
-        # --- ABA 1 e 2 (Lógica original mantida) ---
+        # --- PROCESSAMENTO DO NOVO PAINEL ---
+        # No seu novo layout de painel, o fornecedor está na coluna 'Fornecedor' (ex: "4062 - América...")
         df_painel['Fornecedor_UP'] = df_painel['Fornecedor'].astype(str).str.strip().str.upper()
-        df_painel['nf_ref_limpa'] = df_painel['N° da Nota fiscal'].apply(extrair_nf)
+        
+        # Mapeia CNPJ para o Painel via Relatório de Credores
         painel_com_cnpj = pd.merge(df_painel, df_forn[['Credor_UP', 'CNPJCPF']], left_on='Fornecedor_UP', right_on='Credor_UP', how='left')
-        painel_com_cnpj['chave_p'] = painel_com_cnpj['CNPJCPF'] + "_" + painel_com_cnpj['nf_ref_limpa']
-        chaves_lancadas_real = set(painel_com_cnpj[painel_com_cnpj['nf_ref_limpa'] != ""]['chave_p'].unique())
-        cnpjs_no_painel = set(painel_com_cnpj['CNPJCPF'].unique())
+        
+        # Identifica a coluna correta de notas fiscais no painel (tenta achar 'N° da Nota fiscal' ou 'Chave NF-e')
+        col_nf_painel = 'N° da Nota fiscal' if 'N° da Nota fiscal' in df_painel.columns else ('N° da Nota Fiscal' if 'N° da Nota Fiscal' in df_painel.columns else 'N. do Pedido')
+        
+        def extrair_numero_nf_painel(x):
+            texto = str(x).strip()
+            if not texto or texto == "nan": return ""
+            # Pega o último elemento se houver barras ou limpa os dígitos
+            parte_final = texto.split('/')[-1]
+            return "".join(filter(str.isdigit, parte_final)).strip()
 
-        resumo_painel = pd.merge(df_nf, painel_com_cnpj[['chave_p', 'N° da Nota fiscal']].drop_duplicates('chave_p'), left_on='chave_unica', right_on='chave_p', how='left')
+        painel_com_cnpj['nf_ref_limpa'] = painel_com_cnpj[col_nf_painel].apply(extrair_numero_nf_painel)
+        
+        # Cria chave de cruzamento no Painel
+        painel_com_cnpj['chave_p'] = painel_com_cnpj['CNPJCPF'] + "_" + painel_com_cnpj['nf_ref_limpa']
+        
+        chaves_lancadas_real = set(painel_com_cnpj[painel_com_cnpj['nf_ref_limpa'] != ""]['chave_p'].unique())
+        cnpjs_no_painel = set(painel_com_cnpj['CNPJCPF'].dropna().unique())
+
+        # Cruzamento Aba 1
+        resumo_painel = pd.merge(df_nf, painel_com_cnpj[['chave_p', col_nf_painel]].drop_duplicates('chave_p'), left_on='chave_unica', right_on='chave_p', how='left')
+        if col_nf_painel in resumo_painel.columns and col_nf_painel != 'N° da Nota fiscal':
+            resumo_painel = resumo_painel.rename(columns={col_nf_painel: 'N° da Nota fiscal'})
+        elif 'N° da Nota fiscal' not in resumo_painel.columns:
+            resumo_painel['N° da Nota fiscal'] = ""
+
         def definir_status_painel(r):
             if r['chave_unica'] in chaves_lancadas_real: return "✅ NF Lançada"
             if r[NF_CNPJ] in cnpjs_no_painel: return "⚠️ Para Verificação"
             return "❌ Sem Histórico"
         resumo_painel['Status'] = resumo_painel.apply(definir_status_painel, axis=1)
         
+        # --- PROCESSAMENTO ABA 2 (PEDIDOS) ---
         df_relacao['Cód. fornecedor'] = df_relacao['Cód. fornecedor'].apply(limpar_cod)
         rel_com_cnpj = pd.merge(df_relacao, df_forn[['Cód. Fornecedor', 'CNPJCPF']], left_on='Cód. fornecedor', right_on='Cód. Fornecedor', how='left')
         peds_agrupados = rel_com_cnpj.groupby('CNPJCPF')['Nº do pedido'].apply(lambda x: ", ".join(set(x.astype(str).unique()))).reset_index()
+        
         resumo_pedidos = pd.merge(resumo_painel, peds_agrupados, left_on=NF_CNPJ, right_on='CNPJCPF', how='left')
         cnpjs_com_pedido = set(peds_agrupados['CNPJCPF'].unique())
+        
         def status_pedidos(r):
             if r['chave_unica'] in chaves_lancadas_real: return "✅ Resolvido Painel"
             if r[NF_CNPJ] in cnpjs_com_pedido or r['Status'] == "⚠️ Para Verificação": return "⚠️ Para Verificação"
             return "❌ Sem Histórico"
         resumo_pedidos['Status_Ped'] = resumo_pedidos.apply(status_pedidos, axis=1)
 
-        # --- ABA 3: CONTRATO (LÓGICA DO SEU MODELO QUE FUNCIONA) ---
+        # --- ABA 3: CONTRATO ---
         registros_ct = []
         item_atual = {'Contrato': None, 'CNPJ': None}
         
@@ -156,22 +159,18 @@ if st.button("🚀 Processar Auditoria"):
             col_a = str(linha[0]).strip() if pd.notna(linha[0]) else ""
             col_d = linha[3] if pd.notna(linha[3]) else "" 
             
-            # Se a coluna A diz "Contrato", pega o valor da coluna D
             if col_a == "Contrato":
                 item_atual['Contrato'] = str(col_d).strip()
-            # Se a coluna A diz "CNPJ", vincula ao contrato que pegou acima
             elif col_a == "CNPJ" and item_atual['Contrato']:
                 item_atual['CNPJ'] = limpar_cnpj(col_d)
                 registros_ct.append(item_atual.copy())
 
-        # Agrupamento seguro
         if registros_ct:
             df_ct_final = pd.DataFrame(registros_ct).dropna(subset=['CNPJ'])
             cts_agrupados = df_ct_final.groupby('CNPJ')['Contrato'].apply(lambda x: ", ".join(set(x.astype(str).unique()))).reset_index()
         else:
             cts_agrupados = pd.DataFrame(columns=['CNPJ', 'Contrato'])
 
-        # Cruzamento final
         resumo_contratos = pd.merge(resumo_pedidos, cts_agrupados, left_on=NF_CNPJ, right_on='CNPJ', how='left')
         
         def status_contratos(r):
@@ -181,6 +180,10 @@ if st.button("🚀 Processar Auditoria"):
 
         resumo_contratos['Status_CT'] = resumo_contratos.apply(status_contratos, axis=1)
         
+        # Garante a existência da coluna do pedido se ela não vier no merge
+        if 'Nº do pedido' not in resumo_contratos.columns:
+            resumo_contratos['Nº do pedido'] = ""
+
         aba3_final = resumo_contratos[[
             NF_NUMERO, NF_CNPJ, NF_FORN, NF_DATA, NF_VALOR, 
             'N° da Nota fiscal', 'Nº do pedido', 'Contrato', 'Status_CT'
@@ -190,7 +193,10 @@ if st.button("🚀 Processar Auditoria"):
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             resumo_painel[[NF_NUMERO, NF_CNPJ, NF_FORN, NF_DATA, NF_VALOR, 'N° da Nota fiscal', 'Status']].to_excel(writer, sheet_name='1. PAINEL', index=False)
-            resumo_pedidos[[NF_NUMERO, NF_CNPJ, NF_FORN, NF_DATA, NF_VALOR, 'N° da Nota fiscal', 'Nº do pedido', 'Status_Ped']].rename(columns={'Status_Ped': 'Status', 'Nº do pedido': 'Pedido'}).to_excel(writer, sheet_name='2. PEDIDOS', index=False)
+            
+            cols_aba2 = [NF_NUMERO, NF_CNPJ, NF_FORN, NF_DATA, NF_VALOR, 'N° da Nota fiscal', 'Nº do pedido', 'Status_Ped']
+            resumo_pedidos[cols_aba2].rename(columns={'Status_Ped': 'Status', 'Nº do pedido': 'Pedido'}).to_excel(writer, sheet_name='2. PEDIDOS', index=False)
+            
             aba3_final.to_excel(writer, sheet_name='3. CONTRATO', index=False)
         
         st.success("Tudo pronto! Relatório de Auditoria gerado com sucesso.")
