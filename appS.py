@@ -73,14 +73,49 @@ if st.button("🚀 Processar Auditoria"):
 
         df_forn = transformar_credor_limpo(df_forn_raw)
         
-        NF_CNPJ = 'CNPJ Prestador (CNPJ)' if 'CNPJ Prestador (CNPJ)' in df_nf.columns else df_nf.columns[16]
-        NF_NUMERO = 'Número NFS-e (nNFSe)'
-        NF_FORN = 'Nome Prestador (xNome)'
-        NF_DATA = 'Data/Hora Emissão DPS (dhEmi)'
-        NF_VALOR = 'Valor do Serviço (vServ) (vServ)'
+        # --- Definição das Colunas de Forma Segura ---
+        # CNPJ do Prestador/Emitente
+        if 'CNPJ Prestador (CNPJ)' in df_nf.columns:
+            NF_CNPJ = 'CNPJ Prestador (CNPJ)'
+        elif 'CNPJ emitente' in df_nf.columns:
+            NF_CNPJ = 'CNPJ emitente'
+        else:
+            NF_CNPJ = df_nf.columns[1] if len(df_nf.columns) > 1 else df_nf.columns[0]
+
+        # Número da Nota Fiscal
+        if 'Número NFS-e (nNFSe)' in df_nf.columns:
+            NF_NUMERO = 'Número NFS-e (nNFSe)'
+        elif 'Número/Série' in df_nf.columns:
+            NF_NUMERO = 'Número/Série'
+        else:
+            NF_NUMERO = df_nf.columns[11] if len(df_nf.columns) > 11 else df_nf.columns[0]
+
+        # Nome do Fornecedor / Emitente
+        if 'Nome Prestador (xNome)' in df_nf.columns:
+            NF_FORN = 'Nome Prestador (xNome)'
+        elif 'Emitente' in df_nf.columns:
+            NF_FORN = 'Emitente'
+        else:
+            NF_FORN = df_nf.columns[0]
+
+        # Data de Emissão
+        if 'Data/Hora Emissão DPS (dhEmi)' in df_nf.columns:
+            NF_DATA = 'Data/Hora Emissão DPS (dhEmi)'
+        elif 'Emissão' in df_nf.columns:
+            NF_DATA = 'Emissão'
+        else:
+            NF_DATA = df_nf.columns[9] if len(df_nf.columns) > 9 else df_nf.columns[0]
+
+        # Valor do Serviço / Valor da Nota
+        if 'Valor do Serviço (vServ) (vServ)' in df_nf.columns:
+            NF_VALOR = 'Valor do Serviço (vServ) (vServ)'
+        elif 'Valor' in df_nf.columns:
+            NF_VALOR = 'Valor'
+        else:
+            NF_VALOR = df_nf.columns[12] if len(df_nf.columns) > 12 else df_nf.columns[0]
         
         df_nf[NF_CNPJ] = df_nf[NF_CNPJ].apply(limpar_cnpj)
-        df_nf['nf_limpa'] = df_nf[NF_NUMERO].astype(str).str.strip()
+        df_nf['nf_limpa'] = df_nf[NF_NUMERO].astype(str).apply(lambda x: "".join(filter(str.isdigit, x.split('/')[0])).strip())
         df_nf['chave_unica'] = df_nf[NF_CNPJ] + "_" + df_nf['nf_limpa']
         
         df_forn['CNPJCPF'] = df_forn['CNPJCPF'].apply(limpar_cnpj)
