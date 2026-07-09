@@ -106,7 +106,7 @@ if st.button("🚀 Iniciar Auditoria"):
         df_nf['CNPJ emitente'] = df_nf['CNPJ emitente'].apply(limpar_cnpj)
 
         # 🔥 CORREÇÃO AQUI
-        df_nf['nf_limpa'] = df_nf['Núm/Série'].apply(extrair_nf_produto)
+        df_nf['nf_limpa'] = df_nf['Número/Série'].apply(extrair_nf_produto)
         
         # Chave
         df_nf['chave_unica'] = df_nf.apply(lambda r: r['CNPJ emitente'] + "_" + r['nf_limpa'] if r['nf_limpa'] != "" else "SEM_NF_" + str(r.name), axis=1)
@@ -174,7 +174,7 @@ if st.button("🚀 Iniciar Auditoria"):
         resumo_contratos['Status_CT'] = resumo_contratos.apply(status_ct, axis=1)
 
         # --- SAÍDA FINAL (SEU PADRÃO ORIGINAL) ---
-        cols_base = ['Núm/Série', 'CNPJ emitente', 'Emitente', 'Emissão', 'Valor']
+        cols_base = ['Número/Série', 'CNPJ emitente', 'Emitente', 'Emissão', 'Valor']
         cols_extra = ['CNPJ Destinatário', 'Destinatário']
         
         aba1 = resumo_painel[cols_base + ['N° da Nota fiscal', 'Status'] + cols_extra]
