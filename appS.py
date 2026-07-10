@@ -63,7 +63,6 @@ def transformar_credor_limpo(df_bruto):
     return df_bruto
 
 # --- PROCESSAMENTO ---
-# --- PROCESSAMENTO ---
 if st.button("🚀 Processar Auditoria"):
     if all([file_nf, file_forn, file_painel, file_relacao, file_contrato]):
         # Leitura dos arquivos garantindo conversão de tipos padrão do Pandas
@@ -82,13 +81,12 @@ if st.button("🚀 Processar Auditoria"):
         NF_DATA = 'Emissão' if 'Emissão' in df_nf.columns else ('Data/Hora Emissão DPS (dhEmi)' if 'Data/Hora Emissão DPS (dhEmi)' in df_nf.columns else df_nf.columns[9])
         NF_VALOR = 'Valor' if 'Valor' in df_nf.columns else ('Valor do Serviço (vServ) (vServ)' if 'Valor do Serviço (vServ) (vServ)' in df_nf.columns else df_nf.columns[12])
         
-        # Limpezas e Chaves Base na NF (Convertendo para string nativa para evitar falhas de Arrow)
+        # Limpezas e Chaves Base na NF
         df_nf[NF_CNPJ] = df_nf[NF_CNPJ].astype(str).apply(limpar_cnpj)
         
         def extrair_numero_nf_puro(x):
             texto = str(x).strip()
             if not texto or texto == "nan": return ""
-            # Divide na barra se houver (ex: 8750/1 vira 8750)
             parte_antes_da_barra = texto.split('/')[0]
             return "".join(filter(str.isdigit, parte_antes_da_barra)).strip()
 
@@ -98,30 +96,34 @@ if st.button("🚀 Processar Auditoria"):
         df_forn['CNPJCPF'] = df_forn['CNPJCPF'].astype(str).apply(limpar_cnpj)
         df_forn['Credor_UP'] = df_forn['Credor'].astype(str).str.strip().str.upper()
 
-        # --- PROCESSAMENTO DO NOVO PAINEL ---
-        # No seu novo layout de painel, o fornecedor está na coluna 'Fornecedor' (ex: "4062 - América...")
+        # --- PROCESSAMENTO DO PAINEL ---
         df_painel['Fornecedor_UP'] = df_painel['Fornecedor'].astype(str).str.strip().str.upper()
         
         # Mapeia CNPJ para o Painel via Relatório de Credores
         painel_com_cnpj = pd.merge(df_painel, df_forn[['Credor_UP', 'CNPJCPF']], left_on='Fornecedor_UP', right_on='Credor_UP', how='left')
+        painel_com_cnpj['CNPJCPF'] = painel_com_cnpj['CNPJCPF'].apply(limpar_cnpj)
         
-        # Identifica a coluna correta de notas fiscais no painel (tenta achar 'N° da Nota fiscal' ou 'Chave NF-e')
         col_nf_painel = 'N° da Nota fiscal' if 'N° da Nota fiscal' in df_painel.columns else ('N° da Nota Fiscal' if 'N° da Nota Fiscal' in df_painel.columns else 'N. do Pedido')
         
         def extrair_numero_nf_painel(x):
             texto = str(x).strip()
             if not texto or texto == "nan": return ""
-            # Pega o último elemento se houver barras ou limpa os dígitos
             parte_final = texto.split('/')[-1]
             return "".join(filter(str.isdigit, parte_final)).strip()
 
         painel_com_cnpj['nf_ref_limpa'] = painel_com_cnpj[col_nf_painel].apply(extrair_numero_nf_painel)
-        
-        # Cria chave de cruzamento no Painel
         painel_com_cnpj['chave_p'] = painel_com_cnpj['CNPJCPF'] + "_" + painel_com_cnpj['nf_ref_limpa']
         
         chaves_lancadas_real = set(painel_com_cnpj[painel_com_cnpj['nf_ref_limpa'] != ""]['chave_p'].unique())
         cnpjs_no_painel = set(painel_com_cnpj['CNPJCPF'].dropna().unique())
+
+        # Mapeamento de Pedidos Vinculados no Painel para exclusão na aba de Contratos
+        col_pedido_painel = 'N° do Pedido' if 'N° do Pedido' in painel_com_cnpj.columns else ('Nº do pedido' if 'Nº do pedido' in painel_com_cnpj.columns else 'N° do pedido')
+        if col_pedido_painel in painel_com_cnpj.columns:
+            df_painel_validos = painel_com_cnpj.dropna(subset=[col_pedido_painel])
+            pedidos_vinculados_painel = set(df_painel_validos[col_pedido_painel].astype(str).str.strip().unique())
+        else:
+            pedidos_vinculados_painel = set()
 
         # Cruzamento Aba 1
         resumo_painel = pd.merge(df_nf, painel_com_cnpj[['chave_p', col_nf_painel]].drop_duplicates('chave_p'), left_on='chave_unica', right_on='chave_p', how='left')
@@ -139,7 +141,9 @@ if st.button("🚀 Processar Auditoria"):
         # --- PROCESSAMENTO ABA 2 (PEDIDOS) ---
         df_relacao['Cód. fornecedor'] = df_relacao['Cód. fornecedor'].apply(limpar_cod)
         rel_com_cnpj = pd.merge(df_relacao, df_forn[['Cód. Fornecedor', 'CNPJCPF']], left_on='Cód. fornecedor', right_on='Cód. Fornecedor', how='left')
-        peds_agrupados = rel_com_cnpj.groupby('CNPJCPF')['Nº do pedido'].apply(lambda x: ", ".join(set(x.astype(str).unique()))).reset_index()
+        rel_com_cnpj['CNPJCPF'] = rel_com_cnpj['CNPJCPF'].apply(limpar_cnpj)
+        
+        peds_agrupados = rel_com_cnpj.dropna(subset=['Nº do pedido']).groupby('CNPJCPF')['Nº do pedido'].apply(lambda x: ", ".join(sorted(set(x.astype(str).unique())))).reset_index()
         
         resumo_pedidos = pd.merge(resumo_painel, peds_agrupados, left_on=NF_CNPJ, right_on='CNPJCPF', how='left')
         cnpjs_com_pedido = set(peds_agrupados['CNPJCPF'].unique())
@@ -167,7 +171,7 @@ if st.button("🚀 Processar Auditoria"):
 
         if registros_ct:
             df_ct_final = pd.DataFrame(registros_ct).dropna(subset=['CNPJ'])
-            cts_agrupados = df_ct_final.groupby('CNPJ')['Contrato'].apply(lambda x: ", ".join(set(x.astype(str).unique()))).reset_index()
+            cts_agrupados = df_ct_final.groupby('CNPJ')['Contrato'].apply(lambda x: ", ".join(sorted(set(x.astype(str).unique())))).reset_index()
         else:
             cts_agrupados = pd.DataFrame(columns=['CNPJ', 'Contrato'])
 
@@ -180,9 +184,28 @@ if st.button("🚀 Processar Auditoria"):
 
         resumo_contratos['Status_CT'] = resumo_contratos.apply(status_contratos, axis=1)
         
-        # Garante a existência da coluna do pedido se ela não vier no merge
         if 'Nº do pedido' not in resumo_contratos.columns:
             resumo_contratos['Nº do pedido'] = ""
+
+        # 🔥 NOVA LÓGICA DE FILTRAGEM: Oculta pedidos faturados e valida se há OCs abertas
+        def filtrar_pedidos_em_aberto(r):
+            if r['Status_CT'] == "✅ Resolvido Painel":
+                return r['Nº do pedido']
+                
+            pedidos_string = str(r['Nº do pedido']).strip()
+            if pd.isna(r['Nº do pedido']) or pedidos_string == "" or pedidos_string.lower() == "nan":
+                return "NECESSÁRIO CONFECCIONAR OC"
+            
+            lista_pedidos = [p.strip() for p in pedidos_string.split(',')]
+            pedidos_em_aberto = [p for p in lista_pedidos if p not in pedidos_vinculados_painel]
+            
+            if len(pedidos_em_aberto) > 0:
+                return ", ".join(pedidos_em_aberto)
+            else:
+                return "NECESSÁRIO CONFECCIONAR OC"
+
+        # Aplicando a nova regra de filtragem estrita apenas na aba 3 de Contratos
+        resumo_contratos['Nº do pedido'] = resumo_contratos.apply(filtrar_pedidos_em_aberto, axis=1)
 
         aba3_final = resumo_contratos[[
             NF_NUMERO, NF_CNPJ, NF_FORN, NF_DATA, NF_VALOR, 
