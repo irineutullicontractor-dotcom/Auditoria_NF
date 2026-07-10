@@ -13,6 +13,7 @@ st.markdown("""
 3. Carregue o relatório do **Painel** - Puxar relatório de no mínimo 90 dias atrás até a data vigente.
 4. Carregue o relatório de **Pedidos** - Puxar relatório de no mínimo 90 dias atrás até a data vigente.
 5. Carregue o relatório de **Contratos** - Puxar relatório de 01/01/2020 até a data vigente.
+6. Carregue o relatório de **Títulos** - Puxar relatório de no mínimo 90 dias atrás até a data vigente.
 """)
 
 # --- UPLOAD DOS FICHEIROS ---
@@ -24,6 +25,7 @@ with col1:
 with col2:
     file_relacao = st.file_uploader("4. Relatório Pedidos - Home / Suprimentos / Compras / Relatórios / Pedidos de compra / Relação de Pedidos de Compra (Novo).", type=['xlsx', 'csv'])
     file_contrato = st.file_uploader("5. Relatório Contrato - Home / Suprimentos / Contratos e Medições / Relatórios / Contratos / Emissão de Contratos.", type=['xlsx', 'csv'])
+    file_titulo = st.file_uploader("6. Relatório Título - Home / Financeiro / Contas a Pagar / Relatórios / Títulos por Data.", type=['xlsx'])
 
 # --- FUNÇÕES DE LIMPEZA ---
 def limpar_cnpj(v):
@@ -35,14 +37,12 @@ def limpar_cod(v):
     if pd.isna(v): return ""
     return str(v).split('.')[0].strip().lstrip('0')
 
-# NF PRODUTO → antes da /
 def extrair_nf_produto(v):
     if pd.isna(v) or str(v).strip() == "" or str(v).lower() == "nan": return ""
     v = str(v).split('/')[0]
     v = "".join(filter(str.isdigit, v))
     return v.lstrip('0')
 
-# NF PAINEL → depois da /
 def extrair_nf_painel(v):
     if pd.isna(v) or str(v).strip() == "" or str(v).lower() == "nan": return ""
     v = str(v)
@@ -91,15 +91,34 @@ def transformar_credor_limpo(df_bruto):
             return df_header.rename(columns={'CNPJ/CPF': 'CNPJCPF'})
     return df_bruto
 
+def estruturar_titulo_limpo(file):
+    df_bruto = pd.read_excel(file, header=None)
+    inicio_dados = None
+    for i, row in df_bruto.iterrows():
+        if str(row[0]).strip().lower() == "item":
+            inicio_dados = i
+            break
+    if inicio_dados is None:
+        return pd.DataFrame()
+    df = pd.read_excel(file, skiprows=inicio_dados)
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
 # --- PROCESSAMENTO ---
 if st.button("🚀 Iniciar Auditoria"):
-    if all([file_nf_prod, file_forn, file_painel, file_relacao, file_contrato]):
+    if all([file_nf_prod, file_forn, file_painel, file_relacao, file_contrato, file_titulo]):
         
         df_nf = estruturar_notas_produtos_interno(file_nf_prod)
         df_forn = transformar_credor_limpo(pd.read_excel(file_forn, header=None))
         df_painel = pd.read_excel(file_painel)
         df_relacao = pd.read_excel(file_relacao)
         df_bruto_ct = pd.read_excel(file_contrato, header=None)
+        df_titulos_raw = estruturar_titulo_limpo(file_titulo)
+
+        # Extrair pedidos liquidados do Financeiro (Títulos)
+        pedidos_com_nf_financeiro = set()
+        if not df_titulos_raw.empty and 'CT/OC' in df_titulos_raw.columns:
+            pedidos_com_nf_financeiro = set(df_titulos_raw['CT/OC'].dropna().astype(str).str.split('.').str[0].str.strip().unique())
 
         # Padronização
         df_forn['CNPJCPF'] = df_forn['CNPJCPF'].apply(limpar_cnpj)
@@ -119,10 +138,6 @@ if st.button("🚀 Iniciar Auditoria"):
         
         chaves_lancadas = set(painel_com_cnpj[painel_com_cnpj['nf_ref_limpa'] != ""]['chave_p'].unique())
         cnpjs_no_painel = set(painel_com_cnpj['CNPJCPF'].unique())
-
-        # Mapeamento de Pedidos Vinculados no Painel para exclusão
-        df_painel_validos = painel_com_cnpj.dropna(subset=['N° do Pedido'])
-        pedidos_vinculados_painel = set(df_painel_validos['N° do Pedido'].astype(str).str.strip().unique())
 
         # --- ABA 1: PAINEL ---
         resumo_painel = pd.merge(df_nf, painel_com_cnpj[['chave_p', 'N° da Nota fiscal']].drop_duplicates('chave_p'), left_on='chave_unica', right_on='chave_p', how='left')
@@ -174,9 +189,8 @@ if st.button("🚀 Iniciar Auditoria"):
         
         resumo_contratos['Status_CT'] = resumo_contratos.apply(status_ct, axis=1)
 
-        # 🔥 NOVA LÓGICA: Filtragem inteligente de Pedidos para a Aba 3
-        def filtrar_pedidos_em_aberto(r):
-            # Se já está resolvido, não há necessidade de avaliar OC pendente
+        # 🔥 LÓGICA PELO ARQUIVO DE TÍTULOS (FINANCEIRO): Filtra e deixa apenas OCs sem NF vinculada
+        def filtrar_pedidos_por_titulo(r):
             if r['Status_CT'] == "✅ Resolvido Painel":
                 return r['Nº do pedido']
                 
@@ -184,19 +198,17 @@ if st.button("🚀 Iniciar Auditoria"):
             if pd.isna(r['Nº do pedido']) or pedidos_string == "" or pedidos_string.lower() == "nan":
                 return "NECESSÁRIO CONFECCIONAR OC"
             
-            # Divide os pedidos agrupados do fornecedor
-            lista_pedidos = [p.strip() for p in pedidos_string.split(',')]
-            
-            # Filtra retendo apenas os que NÃO estão vinculados a nenhuma NF no painel
-            pedidos_em_aberto = [p for p in lista_pedidos if p not in pedidos_vinculados_painel]
+            lista_pedidos = [p.split('.')[0].strip() for p in pedidos_string.split(',')]
+            # Filtra retendo apenas os que NÃO possuem registro na coluna CT/OC do Contas a Pagar
+            pedidos_em_aberto = [p for p in lista_pedidos if p not in pedidos_com_nf_financeiro]
             
             if len(pedidos_em_aberto) > 0:
                 return ", ".join(pedidos_em_aberto)
             else:
                 return "NECESSÁRIO CONFECCIONAR OC"
 
-        # Aplica o filtro estrito na coluna de Pedidos apenas para a visão de Contratos (Aba 3)
-        resumo_contratos['Nº do pedido'] = resumo_contratos.apply(filtrar_pedidos_em_aberto, axis=1)
+        # Aplica o filtro de Títulos estrito na aba 3
+        resumo_contratos['Nº do pedido'] = resumo_contratos.apply(filtrar_pedidos_por_titulo, axis=1)
 
         # --- SAÍDA FINAL ---
         cols_base = ['Núm/Série', 'CNPJ emitente', 'Emitente', 'Emissão', 'Valor']
@@ -212,5 +224,5 @@ if st.button("🚀 Iniciar Auditoria"):
             aba2.to_excel(writer, sheet_name='2. PEDIDOS', index=False)
             aba3.to_excel(writer, sheet_name='3. CONTRATO', index=False)
         
-        st.success("Tudo pronto! Relatório de Auditoria gerado com sucesso.")
+        st.success("Tudo pronto! Relatório de Auditoria de Produtos gerado.")
         st.download_button("📥 Baixar Auditoria", output.getvalue(), "AUDITORIA_NF_PRODUTO.xlsx")
