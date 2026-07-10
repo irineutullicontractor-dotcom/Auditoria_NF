@@ -35,14 +35,14 @@ def limpar_cod(v):
     if pd.isna(v): return ""
     return str(v).split('.')[0].strip().lstrip('0')
 
-# 🔥 NF PRODUTO → antes da /
+# NF PRODUTO → antes da /
 def extrair_nf_produto(v):
     if pd.isna(v) or str(v).strip() == "" or str(v).lower() == "nan": return ""
     v = str(v).split('/')[0]
     v = "".join(filter(str.isdigit, v))
     return v.lstrip('0')
 
-# 🔥 NF PAINEL → depois da /
+# NF PAINEL → depois da /
 def extrair_nf_painel(v):
     if pd.isna(v) or str(v).strip() == "" or str(v).lower() == "nan": return ""
     v = str(v)
@@ -105,10 +105,7 @@ if st.button("🚀 Iniciar Auditoria"):
         df_forn['CNPJCPF'] = df_forn['CNPJCPF'].apply(limpar_cnpj)
         df_nf['CNPJ emitente'] = df_nf['CNPJ emitente'].apply(limpar_cnpj)
 
-        # 🔥 CORREÇÃO AQUI
         df_nf['nf_limpa'] = df_nf['Núm/Série'].apply(extrair_nf_produto)
-        
-        # Chave
         df_nf['chave_unica'] = df_nf.apply(lambda r: r['CNPJ emitente'] + "_" + r['nf_limpa'] if r['nf_limpa'] != "" else "SEM_NF_" + str(r.name), axis=1)
 
         # --- PAINEL ---
@@ -122,6 +119,10 @@ if st.button("🚀 Iniciar Auditoria"):
         
         chaves_lancadas = set(painel_com_cnpj[painel_com_cnpj['nf_ref_limpa'] != ""]['chave_p'].unique())
         cnpjs_no_painel = set(painel_com_cnpj['CNPJCPF'].unique())
+
+        # Mapeamento de Pedidos Vinculados no Painel para exclusão
+        df_painel_validos = painel_com_cnpj.dropna(subset=['N° do Pedido'])
+        pedidos_vinculados_painel = set(df_painel_validos['N° do Pedido'].astype(str).str.strip().unique())
 
         # --- ABA 1: PAINEL ---
         resumo_painel = pd.merge(df_nf, painel_com_cnpj[['chave_p', 'N° da Nota fiscal']].drop_duplicates('chave_p'), left_on='chave_unica', right_on='chave_p', how='left')
@@ -173,7 +174,31 @@ if st.button("🚀 Iniciar Auditoria"):
         
         resumo_contratos['Status_CT'] = resumo_contratos.apply(status_ct, axis=1)
 
-        # --- SAÍDA FINAL (SEU PADRÃO ORIGINAL) ---
+        # 🔥 NOVA LÓGICA: Filtragem inteligente de Pedidos para a Aba 3
+        def filtrar_pedidos_em_aberto(r):
+            # Se já está resolvido, não há necessidade de avaliar OC pendente
+            if r['Status_CT'] == "✅ Resolvido Painel":
+                return r['Nº do pedido']
+                
+            pedidos_string = str(r['Nº do pedido']).strip()
+            if pd.isna(r['Nº do pedido']) or pedidos_string == "" or pedidos_string.lower() == "nan":
+                return "NECESSÁRIO CONFECCIONAR OC"
+            
+            # Divide os pedidos agrupados do fornecedor
+            lista_pedidos = [p.strip() for p in pedidos_string.split(',')]
+            
+            # Filtra retendo apenas os que NÃO estão vinculados a nenhuma NF no painel
+            pedidos_em_aberto = [p for p in lista_pedidos if p not in pedidos_vinculados_painel]
+            
+            if len(pedidos_em_aberto) > 0:
+                return ", ".join(pedidos_em_aberto)
+            else:
+                return "NECESSÁRIO CONFECCIONAR OC"
+
+        # Aplica o filtro estrito na coluna de Pedidos apenas para a visão de Contratos (Aba 3)
+        resumo_contratos['Nº do pedido'] = resumo_contratos.apply(filtrar_pedidos_em_aberto, axis=1)
+
+        # --- SAÍDA FINAL ---
         cols_base = ['Núm/Série', 'CNPJ emitente', 'Emitente', 'Emissão', 'Valor']
         cols_extra = ['CNPJ Destinatário', 'Destinatário']
         
