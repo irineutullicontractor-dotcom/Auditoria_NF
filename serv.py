@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import re
 import io
 
 # Configuração da página
@@ -41,24 +42,34 @@ def limpar_cod(v):
     if pd.isna(v): return ""
     return str(v).split('.')[0].strip().lstrip('0')
 
-# 🔥 NOVA FUNÇÃO DE LIMPEZA REFINADA PARA NÚMEROS DE NF DE SERVIÇO (Remove sequências de anos/zeros à esquerda)
-def extrair_numero_nf_servico(x):
+# 🔥 FUNÇÃO AVANÇADA DE EXTRAÇÃO DO NÚMERO REAL DA NFS-e
+def extrair_numero_nf_servico_real(x):
     texto = str(x).strip()
     if not texto or texto.lower() == "nan": return ""
-    # Se houver barra (ex: 20260000031/1), considera a parte antes da barra
-    parte_antes_barra = texto.split('/')[0]
-    # Filtra apenas dígitos
-    so_digitos = "".join(filter(str.isdigit, parte_antes_barra))
-    # Remove zeros à esquerda (ex: 000031 -> 31, 2026000000031 -> 31)
-    num_limpo = so_digitos.lstrip('0')
-    return num_limpo if num_limpo != "" else so_digitos
+    
+    # Remove qualquer sufixo após a barra (ex: /1)
+    texto = texto.split('/')[0]
+    
+    # Extrai somente os dígitos
+    so_digitos = "".join(filter(str.isdigit, texto))
+    if not so_digitos: return ""
+    
+    # Se o número começa com Ano (202X ou 2X) seguido de vários zeros (ex: 2026000000031 ou 2600000006224)
+    # Removemos o padrão de prefixo de ano/zeros
+    num_limpo = re.sub(r'^(?:20\d{2}|2\d)0+', '', so_digitos)
+    
+    # Se sobrou algo limpo, retorna ele, senão limpa os zeros da esquerda normais
+    if num_limpo:
+        return num_limpo
+    
+    res = so_digitos.lstrip('0')
+    return res if res != "" else so_digitos
 
 def extrair_numero_nf_painel(x):
     texto = str(x).strip()
     if not texto or texto.lower() == "nan": return ""
     parte_final = texto.split('/')[-1]
-    so_digitos = "".join(filter(str.isdigit, parte_final))
-    return so_digitos.lstrip('0')
+    return extrair_numero_nf_servico_real(parte_final)
 
 def estruturar_titulo_limpo(file):
     df_bruto = pd.read_excel(file, header=None)
@@ -115,9 +126,9 @@ if st.button("🚀 Processar Auditoria"):
         df_nf['Emitente'] = df_nf_raw.iloc[:, 4]         # Coluna E: Nome Prestador
         df_nf['Valor'] = df_nf_raw.iloc[:, 7]            # Coluna H: Valor do Serviço (R$)
 
-        # Limpeza avançada do número da NF para exibição e chave única
-        df_nf['nf_limpa'] = df_nf['Núm/Série_Raw'].apply(extrair_numero_nf_servico)
-        df_nf['Núm/Série'] = df_nf['nf_limpa']  # Exibe o número limpo (ex: 31 e 6224) no relatório final
+        # Limpeza avançada isolando estritamente o número real da NF
+        df_nf['nf_limpa'] = df_nf['Núm/Série_Raw'].apply(extrair_numero_nf_servico_real)
+        df_nf['Núm/Série'] = df_nf['nf_limpa']  # Exibe o número real tratado (ex: 31, 6224)
         df_nf['chave_unica'] = df_nf['CNPJ emitente'] + "_" + df_nf['nf_limpa']
 
         # Carrega demais arquivos
@@ -270,5 +281,5 @@ if st.button("🚀 Processar Auditoria"):
             aba2_final.to_excel(writer, sheet_name='2. PEDIDOS', index=False)
             aba3_final.to_excel(writer, sheet_name='3. CONTRATO', index=False)
 
-        st.success(f"Tudo pronto! Relatório de Auditoria de Serviços gerado com números de NF tratados para a Obra {cod_obra_alvo}.")
+        st.success(f"Tudo pronto! Relatório de Auditoria de Serviços gerado com filtro avançado de NF para a Obra {cod_obra_alvo}.")
         st.download_button(label="📥 Baixar Auditoria", data=output.getvalue(), file_name="AUDITORIA_NF_SERVIÇO.xlsx")
