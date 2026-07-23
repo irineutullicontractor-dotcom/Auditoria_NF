@@ -41,6 +41,25 @@ def limpar_cod(v):
     if pd.isna(v): return ""
     return str(v).split('.')[0].strip().lstrip('0')
 
+# 🔥 NOVA FUNÇÃO DE LIMPEZA REFINADA PARA NÚMEROS DE NF DE SERVIÇO (Remove sequências de anos/zeros à esquerda)
+def extrair_numero_nf_servico(x):
+    texto = str(x).strip()
+    if not texto or texto.lower() == "nan": return ""
+    # Se houver barra (ex: 20260000031/1), considera a parte antes da barra
+    parte_antes_barra = texto.split('/')[0]
+    # Filtra apenas dígitos
+    so_digitos = "".join(filter(str.isdigit, parte_antes_barra))
+    # Remove zeros à esquerda (ex: 000031 -> 31, 2026000000031 -> 31)
+    num_limpo = so_digitos.lstrip('0')
+    return num_limpo if num_limpo != "" else so_digitos
+
+def extrair_numero_nf_painel(x):
+    texto = str(x).strip()
+    if not texto or texto.lower() == "nan": return ""
+    parte_final = texto.split('/')[-1]
+    so_digitos = "".join(filter(str.isdigit, parte_final))
+    return so_digitos.lstrip('0')
+
 def estruturar_titulo_limpo(file):
     df_bruto = pd.read_excel(file, header=None)
     inicio_dados = None
@@ -90,20 +109,15 @@ if st.button("🚀 Processar Auditoria"):
         df_nf_raw = pd.read_excel(file_nf) if file_nf.name.endswith('xlsx') else pd.read_csv(file_nf)
         
         df_nf = pd.DataFrame()
-        df_nf['Núm/Série'] = df_nf_raw.iloc[:, 0]        # Coluna A: Número NFS-e
+        df_nf['Núm/Série_Raw'] = df_nf_raw.iloc[:, 0]    # Coluna A: Número NFS-e Bruto
         df_nf['Emissão'] = df_nf_raw.iloc[:, 1]          # Coluna B: Data Geração
         df_nf['CNPJ emitente'] = df_nf_raw.iloc[:, 3].astype(str).apply(limpar_cnpj)  # Coluna D: CNPJ/CPF Prestador
         df_nf['Emitente'] = df_nf_raw.iloc[:, 4]         # Coluna E: Nome Prestador
         df_nf['Valor'] = df_nf_raw.iloc[:, 7]            # Coluna H: Valor do Serviço (R$)
 
-        # Extração limpa do número para chave única
-        def extrair_numero_nf_puro(x):
-            texto = str(x).strip()
-            if not texto or texto == "nan": return ""
-            parte_antes_da_barra = texto.split('/')[0]
-            return "".join(filter(str.isdigit, parte_antes_da_barra)).strip()
-
-        df_nf['nf_limpa'] = df_nf['Núm/Série'].apply(extrair_numero_nf_puro)
+        # Limpeza avançada do número da NF para exibição e chave única
+        df_nf['nf_limpa'] = df_nf['Núm/Série_Raw'].apply(extrair_numero_nf_servico)
+        df_nf['Núm/Série'] = df_nf['nf_limpa']  # Exibe o número limpo (ex: 31 e 6224) no relatório final
         df_nf['chave_unica'] = df_nf['CNPJ emitente'] + "_" + df_nf['nf_limpa']
 
         # Carrega demais arquivos
@@ -123,12 +137,6 @@ if st.button("🚀 Processar Auditoria"):
         painel_com_cnpj['CNPJCPF'] = painel_com_cnpj['CNPJCPF'].apply(limpar_cnpj)
         
         col_nf_painel = 'N° da Nota fiscal' if 'N° da Nota fiscal' in df_painel.columns else ('N° da Nota Fiscal' if 'N° da Nota Fiscal' in df_painel.columns else 'N. do Pedido')
-        
-        def extrair_numero_nf_painel(x):
-            texto = str(x).strip()
-            if not texto or texto == "nan": return ""
-            parte_final = texto.split('/')[-1]
-            return "".join(filter(str.isdigit, parte_final)).strip()
 
         painel_com_cnpj['nf_ref_limpa'] = painel_com_cnpj[col_nf_painel].apply(extrair_numero_nf_painel)
         painel_com_cnpj['chave_p'] = painel_com_cnpj['CNPJCPF'] + "_" + painel_com_cnpj['nf_ref_limpa']
@@ -262,5 +270,5 @@ if st.button("🚀 Processar Auditoria"):
             aba2_final.to_excel(writer, sheet_name='2. PEDIDOS', index=False)
             aba3_final.to_excel(writer, sheet_name='3. CONTRATO', index=False)
 
-        st.success(f"Tudo pronto! Relatório de Auditoria de Serviços gerado e corrigido para a Obra {cod_obra_alvo}.")
+        st.success(f"Tudo pronto! Relatório de Auditoria de Serviços gerado com números de NF tratados para a Obra {cod_obra_alvo}.")
         st.download_button(label="📥 Baixar Auditoria", data=output.getvalue(), file_name="AUDITORIA_NF_SERVIÇO.xlsx")
