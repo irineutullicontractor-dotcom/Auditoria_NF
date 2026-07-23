@@ -86,16 +86,15 @@ if st.button("🚀 Processar Auditoria"):
     if all([file_nf, file_forn, file_painel, file_relacao, file_contrato, file_titulo]):
         cod_obra_alvo = limpar_cod(codigo_obra_usuario)
 
-        # 1. LEITURA E PADRONIZAÇÃO EXATA DAS COLUNAS DA NF DE SERVIÇO
-        # Coluna A (0): Número NFS-e | Coluna B (1): Data Geração | Coluna C (2): CNPJ/CPF Prestador | Coluna D (3): Nome Prestador | Coluna H (7): Valor do Serviço (R$)
+        # 1. LEITURA COM POSICIONAMENTO EXATO DAS COLUNAS (A, B, D, E, H)
         df_nf_raw = pd.read_excel(file_nf) if file_nf.name.endswith('xlsx') else pd.read_csv(file_nf)
         
         df_nf = pd.DataFrame()
-        df_nf['Núm/Série'] = df_nf_raw.iloc[:, 0]
-        df_nf['Emissão'] = df_nf_raw.iloc[:, 1]
-        df_nf['CNPJ emitente'] = df_nf_raw.iloc[:, 2].astype(str).apply(limpar_cnpj)
-        df_nf['Emitente'] = df_nf_raw.iloc[:, 3]
-        df_nf['Valor'] = df_nf_raw.iloc[:, 7]
+        df_nf['Núm/Série'] = df_nf_raw.iloc[:, 0]        # Coluna A: Número NFS-e
+        df_nf['Emissão'] = df_nf_raw.iloc[:, 1]          # Coluna B: Data Geração
+        df_nf['CNPJ emitente'] = df_nf_raw.iloc[:, 3].astype(str).apply(limpar_cnpj)  # Coluna D: CNPJ/CPF Prestador
+        df_nf['Emitente'] = df_nf_raw.iloc[:, 4]         # Coluna E: Nome Prestador
+        df_nf['Valor'] = df_nf_raw.iloc[:, 7]            # Coluna H: Valor do Serviço (R$)
 
         # Extração limpa do número para chave única
         def extrair_numero_nf_puro(x):
@@ -248,7 +247,7 @@ if st.button("🚀 Processar Auditoria"):
 
         resumo_contratos['Nº do pedido'] = resumo_contratos.apply(filtrar_pedidos_por_titulo, axis=1)
 
-        # --- PADRONIZAÇÃO EXATA DAS COLUNAS DE SAÍDA (PADRÃO PRODUTO) ---
+        # --- EXPORTAÇÃO COM ORDEM DE COLUNAS PADRÃO ---
         cols_aba1 = ['Núm/Série', 'CNPJ emitente', 'Emitente', 'Emissão', 'Valor', 'N° da Nota fiscal', 'Status']
         cols_aba2 = ['Núm/Série', 'CNPJ emitente', 'Emitente', 'Emissão', 'Valor', 'N° da Nota fiscal', 'Pedido', 'Status']
         cols_aba3 = ['Núm/Série', 'CNPJ emitente', 'Emitente', 'Emissão', 'Valor', 'N° da Nota fiscal', 'Pedido', 'Contrato', 'Status']
@@ -257,12 +256,11 @@ if st.button("🚀 Processar Auditoria"):
         aba2_final = resumo_pedidos[['Núm/Série', 'CNPJ emitente', 'Emitente', 'Emissão', 'Valor', 'N° da Nota fiscal', 'Nº do pedido', 'Status_Ped']].rename(columns={'Status_Ped': 'Status', 'Nº do pedido': 'Pedido'})[cols_aba2]
         aba3_final = resumo_contratos[['Núm/Série', 'CNPJ emitente', 'Emitente', 'Emissão', 'Valor', 'N° da Nota fiscal', 'Nº do pedido', 'Contrato', 'Status_CT']].rename(columns={'Status_CT': 'Status', 'Nº do pedido': 'Pedido'})[cols_aba3]
 
-        # Exportação
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             aba1_final.to_excel(writer, sheet_name='1. PAINEL', index=False)
             aba2_final.to_excel(writer, sheet_name='2. PEDIDOS', index=False)
             aba3_final.to_excel(writer, sheet_name='3. CONTRATO', index=False)
 
-        st.success(f"Tudo pronto! Relatório de Auditoria de Serviços gerado e padronizado para a Obra {cod_obra_alvo}.")
+        st.success(f"Tudo pronto! Relatório de Auditoria de Serviços gerado e corrigido para a Obra {cod_obra_alvo}.")
         st.download_button(label="📥 Baixar Auditoria", data=output.getvalue(), file_name="AUDITORIA_NF_SERVIÇO.xlsx")
