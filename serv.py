@@ -2,27 +2,36 @@ import streamlit as st
 import pandas as pd
 import io
 
+# Configuração da página
 st.set_page_config(page_title="Auditoria Interna NF - Serviço", layout="wide")
 
 st.title("📊 Auditoria Interna NF - Serviço")
 st.markdown("""
-### Regra de Baixas Globais:
-- **Baixa Automática:** Cruzamento de NFs lançadas no **Painel** + **Relatório de Títulos/Financeiro** (Todas as Obras).
-- **Status Pendentes e Pedidos:** Filtrado **exclusivamente pela SUA OBRA**.
+### Instruções de uso:
+1. Informe o **código numérico da sua obra**.
+2. Carregue o relatório de **NF's** - 1 por período.
+3. Carregue o relatório de **Credores**.
+4. Carregue o relatório do **Painel** - Puxar relatório de no mínimo 90 dias atrás até a data vigente.
+5. Carregue o relatório de **Pedidos** - Puxar relatório de no mínimo 90 dias atrás até a data vigente.
+6. Carregue o relatório de **Contratos** - Puxar relatório de 01/01/2020 até a data vigente.
+7. Carregue o relatório de **Títulos** - Puxar relatório de no mínimo 90 dias atrás até a data vigente.
 """)
 
+# --- CÓDIGO DA OBRA DO USUÁRIO ---
 codigo_obra_usuario = st.text_input("📍 Informe o código numérico da sua obra (Ex: 2):", value="").strip()
 
+# --- UPLOAD DOS 6 FICHEIROS ---
 col1, col2 = st.columns(2)
 with col1:
-    file_nf = st.file_uploader("1. Relatório de NF's", type=['xlsx', 'csv'])
-    file_forn = st.file_uploader("2. Relatório de Credores", type=['xlsx', 'csv'])
-    file_painel = st.file_uploader("3. Relatório Painel (Todas as obras)", type=['xlsx', 'csv'])
+    file_nf = st.file_uploader("1. Relatório de NF's - Fornecido a cada 10 dias no servidor.", type=['xlsx', 'csv'])
+    file_forn = st.file_uploader("2. Relatório de Credores - Home / Mais Opções / Apoio / Relatórios / Pessoas / Credores.", type=['xlsx', 'csv'])
+    file_painel = st.file_uploader("3. Relatório Painel - Home / Suprimentos / Compras / Painel de Compras (Novo).", type=['xlsx', 'csv'])
 with col2:
-    file_relacao = st.file_uploader("4. Relatório Pedidos (Todas as obras)", type=['xlsx', 'csv'])
-    file_contrato = st.file_uploader("5. Relatório Contrato", type=['xlsx', 'csv'])
-    file_titulo = st.file_uploader("6. Relatório Título (Todas as obras)", type=['xlsx'])
+    file_relacao = st.file_uploader("4. Relatório Pedidos - Home / Suprimentos / Compras / Relatórios / Pedidos de Compra / Relação de Pedidos de Compra (Novo).", type=['xlsx', 'csv'])
+    file_contrato = st.file_uploader("5. Relatório Contrato - Home / Suprimentos / Contratos e Medições / Relatórios / Contratos / Emissão de Contratos.", type=['xlsx', 'csv'])
+    file_titulo = st.file_uploader("6. Relatório Título - Home / Financeiro / Contas a Pagar / Relatórios / Títulos por Data.", type=['xlsx'])
 
+# --- FUNÇÕES DE APOIO ---
 def limpar_cnpj(v):
     if pd.isna(v): return ""
     num = "".join(filter(str.isdigit, str(v)))
@@ -68,9 +77,10 @@ def transformar_credor_limpo(df_bruto):
             return df_header.dropna(subset=['Credor'])
     return df_bruto
 
+# --- PROCESSAMENTO ---
 if st.button("🚀 Processar Auditoria"):
     if not codigo_obra_usuario:
-        st.error("⚠️ Por favor, digite o código numérico da sua obra antes de iniciar.")
+        st.error("⚠️ Por favor, informe o código numérico da sua obra antes de continuar.")
         st.stop()
 
     if all([file_nf, file_forn, file_painel, file_relacao, file_contrato, file_titulo]):
@@ -87,12 +97,14 @@ if st.button("🚀 Processar Auditoria"):
         df_forn['CNPJCPF'] = df_forn['CNPJCPF'].astype(str).apply(limpar_cnpj)
         df_forn['Credor_UP'] = df_forn['Credor'].astype(str).str.strip().str.upper()
 
+        # --- DEFINIÇÃO SEGURA DE COLUNAS (NF) ---
         NF_CNPJ = 'CNPJ emitente' if 'CNPJ emitente' in df_nf.columns else ('CNPJ Prestador (CNPJ)' if 'CNPJ Prestador (CNPJ)' in df_nf.columns else df_nf.columns[1])
         NF_NUMERO = 'Número/Série' if 'Número/Série' in df_nf.columns else ('Número NFS-e (nNFSe)' if 'Número NFS-e (nNFSe)' in df_nf.columns else df_nf.columns[11])
         NF_FORN = 'Emitente' if 'Emitente' in df_nf.columns else ('Nome Prestador (xNome)' if 'Nome Prestador (xNome)' in df_nf.columns else df_nf.columns[0])
         NF_DATA = 'Emissão' if 'Emissão' in df_nf.columns else ('Data/Hora Emissão DPS (dhEmi)' if 'Data/Hora Emissão DPS (dhEmi)' in df_nf.columns else df_nf.columns[9])
         NF_VALOR = 'Valor' if 'Valor' in df_nf.columns else ('Valor do Serviço (vServ) (vServ)' if 'Valor do Serviço (vServ) (vServ)' in df_nf.columns else df_nf.columns[12])
         
+        # Limpezas NF
         df_nf[NF_CNPJ] = df_nf[NF_CNPJ].astype(str).apply(limpar_cnpj)
         
         def extrair_numero_nf_puro(x):
@@ -104,7 +116,7 @@ if st.button("🚀 Processar Auditoria"):
         df_nf['nf_limpa'] = df_nf[NF_NUMERO].apply(extrair_numero_nf_puro)
         df_nf['chave_unica'] = df_nf[NF_CNPJ] + "_" + df_nf['nf_limpa']
 
-        # 1. PAINEL GLOBAL (Para dar baixas)
+        # --- 1. PAINEL GLOBAL (Para dar Baixas) ---
         df_painel['Fornecedor_UP'] = df_painel['Fornecedor'].astype(str).str.strip().str.upper()
         painel_com_cnpj = pd.merge(df_painel, df_forn[['Credor_UP', 'CNPJCPF']], left_on='Fornecedor_UP', right_on='Credor_UP', how='left')
         painel_com_cnpj['CNPJCPF'] = painel_com_cnpj['CNPJCPF'].apply(limpar_cnpj)
@@ -122,33 +134,36 @@ if st.button("🚀 Processar Auditoria"):
         
         chaves_lancadas_painel = set(painel_com_cnpj[painel_com_cnpj['nf_ref_limpa'] != ""]['chave_p'].unique())
 
-        # 2. FINANCEIRO / TÍTULOS GLOBAL (Para dar baixas por NF Lançada)
+        # --- 2. TÍTULOS / FINANCEIRO GLOBAL (Para dar Baixas por NF no Título) ---
         chaves_lancadas_titulos = set()
         pedidos_com_nf_financeiro = set()
+
         if not df_titulos_raw.empty:
+            # Mapeia pedidos/OC quitados
             if 'CT/OC' in df_titulos_raw.columns:
                 pedidos_com_nf_financeiro = set(df_titulos_raw['CT/OC'].dropna().astype(str).str.split('.').str[0].str.strip().unique())
 
+            # Localiza colunas de NF e Fornecedor no Título para realizar baixa por Número de NF
             col_nf_tit = [c for c in df_titulos_raw.columns if 'Nota' in c or 'NF' in c or 'Documento' in c or 'Nº Doc' in c]
             col_forn_tit = [c for c in df_titulos_raw.columns if 'Fornecedor' in c or 'Credor' in c or 'Razão' in c]
-            
+
             if col_nf_tit and col_forn_tit:
                 c_nf = col_nf_tit[0]
                 c_forn = col_forn_tit[0]
-                
+
                 df_titulos_raw['nf_tit_limpa'] = df_titulos_raw[c_nf].apply(extrair_numero_nf_painel)
                 df_titulos_raw['Fornecedor_UP'] = df_titulos_raw[c_forn].astype(str).str.strip().str.upper()
-                
+
                 titulos_com_cnpj = pd.merge(df_titulos_raw, df_forn[['Credor_UP', 'CNPJCPF']], left_on='Fornecedor_UP', right_on='Credor_UP', how='left')
                 titulos_com_cnpj['CNPJCPF'] = titulos_com_cnpj['CNPJCPF'].apply(limpar_cnpj)
                 titulos_com_cnpj['chave_t'] = titulos_com_cnpj['CNPJCPF'] + "_" + titulos_com_cnpj['nf_tit_limpa']
-                
+
                 chaves_lancadas_titulos = set(titulos_com_cnpj[titulos_com_cnpj['nf_tit_limpa'] != ""]['chave_t'].unique())
 
-        # UNIFICAÇÃO DAS BAIXAS (Painel + Títulos)
+        # UNIFICAÇÃO DAS BAIXAS GLOBAIS (Painel + Títulos)
         chaves_lancadas_global = chaves_lancadas_painel.union(chaves_lancadas_titulos)
 
-        # 3. MUNDO LOCAL (PEDIDOS DA SUA OBRA)
+        # --- 3. MUNDO LOCAL (SUA OBRA APENAS) ---
         col_obra_rel = 'Cód. obra' if 'Cód. obra' in df_relacao.columns else df_relacao.columns[0]
         df_relacao['Cód. obra_clean'] = df_relacao[col_obra_rel].apply(limpar_cod)
         df_relacao_obra = df_relacao[df_relacao['Cód. obra_clean'] == cod_obra_alvo].copy()
@@ -159,7 +174,7 @@ if st.button("🚀 Processar Auditoria"):
 
         cnpjs_com_pedido_na_obra = set(rel_obra_com_cnpj['CNPJCPF'].dropna().unique())
 
-        # ABA 1: PAINEL
+        # --- ABA 1: PAINEL ---
         resumo_painel = pd.merge(df_nf, painel_com_cnpj[['chave_p', col_nf_painel]].drop_duplicates('chave_p'), left_on='chave_unica', right_on='chave_p', how='left')
         if col_nf_painel in resumo_painel.columns and col_nf_painel != 'N° da Nota fiscal':
             resumo_painel = resumo_painel.rename(columns={col_nf_painel: 'N° da Nota fiscal'})
@@ -170,9 +185,10 @@ if st.button("🚀 Processar Auditoria"):
             if r['chave_unica'] in chaves_lancadas_global: return "✅ NF Lançada"
             if r[NF_CNPJ] in cnpjs_com_pedido_na_obra: return "⚠️ Para Verificação"
             return "❌ Sem Histórico"
+            
         resumo_painel['Status'] = resumo_painel.apply(definir_status_painel, axis=1)
-        
-        # ABA 2: PEDIDOS
+
+        # --- ABA 2: PEDIDOS ---
         peds_agrupados = rel_obra_com_cnpj.dropna(subset=['Nº do pedido']).groupby('CNPJCPF')['Nº do pedido'].apply(lambda x: ", ".join(sorted(set(x.astype(str).unique())))).reset_index()
         resumo_pedidos = pd.merge(resumo_painel, peds_agrupados, left_on=NF_CNPJ, right_on='CNPJCPF', how='left')
 
@@ -180,9 +196,10 @@ if st.button("🚀 Processar Auditoria"):
             if r['chave_unica'] in chaves_lancadas_global: return "✅ Resolvido Painel"
             if r[NF_CNPJ] in cnpjs_com_pedido_na_obra: return "⚠️ Para Verificação"
             return "❌ Sem Histórico"
+            
         resumo_pedidos['Status_Ped'] = resumo_pedidos.apply(status_pedidos, axis=1)
 
-        # ABA 3: CONTRATO
+        # --- ABA 3: CONTRATO ---
         registros_ct = []
         item_atual = {'Contrato': None, 'CNPJ': None}
         for i in range(len(df_bruto_ct)):
@@ -195,27 +212,36 @@ if st.button("🚀 Processar Auditoria"):
                 item_atual['CNPJ'] = limpar_cnpj(col_d)
                 registros_ct.append(item_atual.copy())
 
-        cts_agrupados = pd.DataFrame(registros_ct).groupby('CNPJ')['Contrato'].apply(lambda x: ", ".join(sorted(set(x.astype(str).unique())))).reset_index() if registros_ct else pd.DataFrame(columns=['CNPJ', 'Contrato'])
+        if registros_ct:
+            df_ct_final = pd.DataFrame(registros_ct).dropna(subset=['CNPJ'])
+            cts_agrupados = df_ct_final.groupby('CNPJ')['Contrato'].apply(lambda x: ", ".join(sorted(set(x.astype(str).unique())))).reset_index()
+        else:
+            cts_agrupados = pd.DataFrame(columns=['CNPJ', 'Contrato'])
 
         resumo_contratos = pd.merge(resumo_pedidos, cts_agrupados, left_on=NF_CNPJ, right_on='CNPJ', how='left')
-        
+
         def status_contratos(r):
             if r['chave_unica'] in chaves_lancadas_global: return "✅ Resolvido Painel"
             if pd.notna(r['Contrato']) and str(r['Contrato']).strip() != "": return "📄 Vínculo Contratual"
             return r['Status_Ped']
+            
         resumo_contratos['Status_CT'] = resumo_contratos.apply(status_contratos, axis=1)
 
+        if 'Nº do pedido' not in resumo_contratos.columns:
+            resumo_contratos['Nº do pedido'] = ""
+
+        # --- LÓGICA FINANCEIRA: Oculta pedidos quitados no Contas a Pagar ---
         def filtrar_pedidos_por_titulo(r):
             if r['Status_CT'] == "✅ Resolvido Painel":
                 return r['Nº do pedido']
-                
+
             pedidos_string = str(r['Nº do pedido']).strip()
             if pd.isna(r['Nº do pedido']) or pedidos_string == "" or pedidos_string.lower() == "nan":
                 return "NECESSÁRIO CONFECCIONAR OC"
-            
+
             lista_pedidos = [p.split('.')[0].strip() for p in pedidos_string.split(',')]
             pedidos_em_aberto = [p for p in lista_pedidos if p not in pedidos_com_nf_financeiro]
-            
+
             if len(pedidos_em_aberto) > 0:
                 return ", ".join(pedidos_em_aberto)
             else:
@@ -228,13 +254,13 @@ if st.button("🚀 Processar Auditoria"):
             'N° da Nota fiscal', 'Nº do pedido', 'Contrato', 'Status_CT'
         ]].rename(columns={'Status_CT': 'Status', 'Nº do pedido': 'Pedido'})
 
-        # SAÍDA
+        # Exportação
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             resumo_painel[[NF_NUMERO, NF_CNPJ, NF_FORN, NF_DATA, NF_VALOR, 'N° da Nota fiscal', 'Status']].to_excel(writer, sheet_name='1. PAINEL', index=False)
             cols_aba2 = [NF_NUMERO, NF_CNPJ, NF_FORN, NF_DATA, NF_VALOR, 'N° da Nota fiscal', 'Nº do pedido', 'Status_Ped']
             resumo_pedidos[cols_aba2].rename(columns={'Status_Ped': 'Status', 'Nº do pedido': 'Pedido'}).to_excel(writer, sheet_name='2. PEDIDOS', index=False)
             aba3_final.to_excel(writer, sheet_name='3. CONTRATO', index=False)
-        
-        st.success(f"Tudo pronto! Auditoria gerada focada na Obra {cod_obra_alvo}.")
+
+        st.success(f"Tudo pronto! Relatório de Auditoria de Serviços gerado focado na Obra {cod_obra_alvo}.")
         st.download_button(label="📥 Baixar Auditoria", data=output.getvalue(), file_name="AUDITORIA_NF_SERVIÇO.xlsx")
