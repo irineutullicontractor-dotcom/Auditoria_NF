@@ -8,29 +8,28 @@ st.set_page_config(page_title="Auditoria Interna NF - Serviço", layout="wide")
 
 st.title("📊 Auditoria Interna NF - Serviço")
 st.markdown("""
+### Regra de Baixas Globais:
+- **Baixa Automática:** Cruzamento de NFs lançadas no **Painel** + **Relatório de Títulos/Financeiro** (Todas as Obras).
+- **Status Pendentes e Pedidos:** Filtrado **exclusivamente pela SUA OBRA**.
 ### Instruções de uso:
-1. Informe o **código numérico da sua obra**.
-2. Carregue o relatório de **NF's** (Serviço).
-3. Carregue o relatório de **Credores**.
-4. Carregue o relatório do **Painel**.
-5. Carregue o relatório de **Pedidos**.
-6. Carregue o relatório de **Contratos**.
-7. Carregue o relatório de **Títulos**.
+1. Carregue o relatório de **NF's** - 1 por período.
+2. Carregue o relatório de **Credores**.
+3. Carregue o relatório do **Painel** - Puxar relatório de no mínimo 90 dias atrás até a data vigente.
+4. Carregue o relatório de **Pedidos** - Puxar relatório de no mínimo 90 dias atrás até a data vigente.
+5. Carregue o relatório de **Contratos** - Puxar relatório de 01/01/2020 até a data vigente.
 """)
 
-# --- CÓDIGO DA OBRA DO USUÁRIO ---
 codigo_obra_usuario = st.text_input("📍 Informe o código numérico da sua obra (Ex: 2):", value="").strip()
 
-# --- UPLOAD DOS FICHEIROS ---
 col1, col2 = st.columns(2)
 with col1:
-    file_nf = st.file_uploader("1. Relatório de NF's (Serviço)", type=['xlsx', 'csv'])
-    file_forn = st.file_uploader("2. Relatório de Credores", type=['xlsx', 'csv'])
-    file_painel = st.file_uploader("3. Relatório Painel", type=['xlsx', 'csv'])
+    file_nf_prod = st.file_uploader("1. Relatório de NF's - Fornecido a cada 10 dias no servidor.", type=['xlsx'])
+    file_forn = st.file_uploader("2. Relatório de Credores - Home / Mais Opções / Apoio / Relatórios / Pessoas / Credores.", type=['xlsx'])
+    file_painel = st.file_uploader("3. Relatório Painel - Home / Suprimentos / Compras / Painel de Compras (Novo).", type=['xlsx'])
 with col2:
-    file_relacao = st.file_uploader("4. Relatório Pedidos", type=['xlsx', 'csv'])
-    file_contrato = st.file_uploader("5. Relatório Contrato", type=['xlsx', 'csv'])
-    file_titulo = st.file_uploader("6. Relatório Título", type=['xlsx'])
+    file_relacao = st.file_uploader("4. Relatório Pedidos - Home / Suprimentos / Compras / Relatórios / Pedidos de compra / Relação de Pedidos de Compra (Novo).", type=['xlsx'])
+    file_contrato = st.file_uploader("5. Relatório Contrato - Home / Suprimentos / Contratos e Medições / Relatórios / Contratos / Emissão de Contratos.", type=['xlsx'])
+    file_titulo = st.file_uploader("6. Relatório Titulo - Home / Financeiro / Contas a Pagar / Relatórios / Títulos por Data.", type=['xlsx'])
 
 # --- FUNÇÕES DE APOIO ---
 def limpar_cnpj(v):
