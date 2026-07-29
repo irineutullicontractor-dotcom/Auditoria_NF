@@ -10,7 +10,7 @@ st.markdown("""
 ### Regra de Baixas Globais:
 - **Baixa Automática:** Cruzamento de NFs lançadas no **Painel** + **Relatório de Títulos/Financeiro** (Todas as Obras).
 - **Status Pendentes e Pedidos:** Filtrado **exclusivamente pela SUA OBRA**.
-- **Aba 4. EM ABERTO:** Consolidação de pedidos ativos da sua obra que ainda não possuem Nota Fiscal/Entrada vinculada (desconsiderando pedidos **Cancelados**).
+- **Aba 4. EM ABERTO:** Consolidação de pedidos ativos da sua obra que ainda não possuem Nota Fiscal/Entrada vinculada (com Fornecedor, Dias em Aberto e Status do Pedido, desconsiderando **Cancelados**).
 """)
 
 codigo_obra_usuario = st.text_input("📍 Informe o código numérico da sua obra (Ex: 2):", value="").strip()
@@ -237,7 +237,7 @@ if st.button("🚀 Iniciar Auditoria"):
         peds_em_aberto_lista = []
 
         # 1. Filtro do arquivo PAINEL (Apenas a obra do usuário)
-        # Q (idx 16) = Nº Pedido | R (idx 17) = Data Confecção | S (idx 18) = Status / Cancelado | U (idx 20) = Fornecedor
+        # Q (idx 16) = Nº Pedido | R (idx 17) = Data Confecção | S (idx 18) = Status Pedido | U (idx 20) = Fornecedor
         # AB (idx 27) = Data Emissão NF | AC (idx 28) = Nº NF
         col_obra_painel = 'Cód. obra' if 'Cód. obra' in df_painel_raw.columns else df_painel_raw.columns[0]
         df_painel_obra = df_painel_raw[df_painel_raw[col_obra_painel].apply(limpar_cod) == cod_obra_alvo].copy()
@@ -245,13 +245,13 @@ if st.button("🚀 Iniciar Auditoria"):
         for _, row in df_painel_obra.iterrows():
             col_q_ped = row.iloc[16] if len(row) > 16 else None
             col_r_dt = row.iloc[17] if len(row) > 17 else None
-            col_s_status = str(row.iloc[18]).strip().lower() if len(row) > 18 and pd.notna(row.iloc[18]) else ""
+            col_s_status = str(row.iloc[18]).strip() if len(row) > 18 and pd.notna(row.iloc[18]) else ""
             col_u_forn = row.iloc[20] if len(row) > 20 else ""
             col_ab_dt_nf = row.iloc[27] if len(row) > 27 else None
             col_ac_num_nf = row.iloc[28] if len(row) > 28 else None
 
             # Desconsidera se estiver CANCELADO
-            if "cancelado" in col_s_status:
+            if "cancelado" in col_s_status.lower():
                 continue
 
             ped_num = str(col_q_ped).split('.')[0].strip() if pd.notna(col_q_ped) else ""
@@ -262,21 +262,22 @@ if st.button("🚀 Iniciar Auditoria"):
                 peds_em_aberto_lista.append({
                     'Pedido': ped_num,
                     'Data Confecção': dt_conf,
-                    'Fornecedor': forn_nome
+                    'Fornecedor': forn_nome,
+                    'Status Pedido': col_s_status
                 })
 
         # 2. Filtro do arquivo PEDIDOS (Apenas a obra do usuário)
         # A (idx 0) = Nº Pedido | B (idx 1) = Data Confecção | H (idx 7) = Fornecedor
-        # AO (idx 40) = Status / Cancelado | AS (idx 44) = Data Entrada NF
+        # AO (idx 40) = Status Pedido | AS (idx 44) = Data Entrada NF
         for _, row in df_relacao_obra.iterrows():
             col_a_ped = row.iloc[0] if len(row) > 0 else None
             col_b_dt = row.iloc[1] if len(row) > 1 else None
             col_h_forn = row.iloc[7] if len(row) > 7 else ""
-            col_ao_status = str(row.iloc[40]).strip().lower() if len(row) > 40 and pd.notna(row.iloc[40]) else ""
+            col_ao_status = str(row.iloc[40]).strip() if len(row) > 40 and pd.notna(row.iloc[40]) else ""
             col_as_dt_ent = row.iloc[44] if len(row) > 44 else None
 
             # Desconsidera se estiver CANCELADO
-            if "cancelado" in col_ao_status:
+            if "cancelado" in col_ao_status.lower():
                 continue
 
             ped_num = str(col_a_ped).split('.')[0].strip() if pd.notna(col_a_ped) else ""
@@ -287,7 +288,8 @@ if st.button("🚀 Iniciar Auditoria"):
                 peds_em_aberto_lista.append({
                     'Pedido': ped_num,
                     'Data Confecção': dt_conf,
-                    'Fornecedor': forn_nome
+                    'Fornecedor': forn_nome,
+                    'Status Pedido': col_ao_status
                 })
 
         # Consolidação e Formatação da Aba 4
@@ -296,16 +298,18 @@ if st.button("🚀 Iniciar Auditoria"):
             
             df_aberto = df_aberto.groupby('Pedido').agg({
                 'Data Confecção': 'min',
-                'Fornecedor': lambda x: next((s for s in x if str(s).strip() != "" and str(s).lower() != "nan"), "")
+                'Fornecedor': lambda x: next((s for s in x if str(s).strip() != "" and str(s).lower() != "nan"), ""),
+                'Status Pedido': lambda x: next((s for s in x if str(s).strip() != "" and str(s).lower() != "nan"), "")
             }).reset_index()
             
             df_aberto['Dias em aberto'] = (hoje - df_aberto['Data Confecção']).dt.days
             df_aberto['Data Confecção'] = df_aberto['Data Confecção'].dt.strftime('%d/%m/%Y')
             df_aberto['Dias em aberto'] = df_aberto['Dias em aberto'].fillna(0).astype(int)
             
-            aba4_final = df_aberto[['Pedido', 'Data Confecção', 'Fornecedor', 'Dias em aberto']].sort_values(by='Dias em aberto', ascending=False)
+            # Ordenação final com a Coluna E: Status Pedido
+            aba4_final = df_aberto[['Pedido', 'Data Confecção', 'Fornecedor', 'Dias em aberto', 'Status Pedido']].sort_values(by='Dias em aberto', ascending=False)
         else:
-            aba4_final = pd.DataFrame(columns=['Pedido', 'Data Confecção', 'Fornecedor', 'Dias em aberto'])
+            aba4_final = pd.DataFrame(columns=['Pedido', 'Data Confecção', 'Fornecedor', 'Dias em aberto', 'Status Pedido'])
 
         # SAÍDA DAS ABAS
         cols_base = ['Núm/Série', 'CNPJ emitente', 'Emitente', 'Emissão', 'Valor']
@@ -322,5 +326,5 @@ if st.button("🚀 Iniciar Auditoria"):
             aba3.to_excel(writer, sheet_name='3. CONTRATO', index=False)
             aba4_final.to_excel(writer, sheet_name='4. EM ABERTO', index=False)
         
-        st.success(f"Tudo pronto! Auditoria gerada desconsiderando pedidos cancelados na Aba 4 (Obra {cod_obra_alvo}).")
+        st.success(f"Tudo pronto! Auditoria gerada com a Coluna E (Status Pedido) na Aba 4 (Obra {cod_obra_alvo}).")
         st.download_button("📥 Baixar Auditoria", output.getvalue(), "AUDITORIA_NF_PRODUTO.xlsx")
