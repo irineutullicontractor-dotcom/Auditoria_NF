@@ -23,7 +23,7 @@ codigo_obra_usuario = st.text_input("📍 Informe o código numérico da sua obr
 
 col1, col2 = st.columns(2)
 with col1:
-    file_nf_prod = st.file_uploader("1. Relatório de NF's - Fornecido a cada 10 dias no servidor.", type=['xlsx'])
+    file_nf = st.file_uploader("1. Relatório de NF's - Fornecido a cada 10 dias no servidor.", type=['xlsx'])
     file_forn = st.file_uploader("2. Relatório de Credores - Home / Mais Opções / Apoio / Relatórios / Pessoas / Credores.", type=['xlsx'])
     file_painel = st.file_uploader("3. Relatório Painel - Home / Suprimentos / Compras / Painel de Compras (Novo).", type=['xlsx'])
 with col2:
