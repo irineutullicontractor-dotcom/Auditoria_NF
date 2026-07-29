@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import datetime
 import io
 
 st.set_page_config(page_title="Auditoria Interna NF - Produto", layout="wide")
@@ -9,6 +10,7 @@ st.markdown("""
 ### Regra de Baixas Globais:
 - **Baixa Automática:** Cruzamento de NFs lançadas no **Painel** + **Relatório de Títulos/Financeiro** (Todas as Obras).
 - **Status Pendentes e Pedidos:** Filtrado **exclusivamente pela SUA OBRA**.
+- **Aba 4. EM ABERTO:** Consolidação de pedidos da sua obra que ainda não possuem Nota Fiscal/Entrada vinculada (com Fornecedor e Dias em Aberto).
 """)
 
 codigo_obra_usuario = st.text_input("📍 Informe o código numérico da sua obra (Ex: 2):", value="").strip()
@@ -106,11 +108,13 @@ if st.button("🚀 Iniciar Auditoria"):
 
     if all([file_nf_prod, file_forn, file_painel, file_relacao, file_contrato, file_titulo]):
         cod_obra_alvo = limpar_cod(codigo_obra_usuario)
-        
+        hoje = pd.to_datetime(datetime.date.today())
+
         df_nf = estruturar_notas_produtos_interno(file_nf_prod)
         df_forn = transformar_credor_limpo(pd.read_excel(file_forn, header=None))
-        df_painel = pd.read_excel(file_painel)
-        df_relacao = pd.read_excel(file_relacao)
+        
+        df_painel_raw = pd.read_excel(file_painel) if file_painel.name.endswith('xlsx') else pd.read_csv(file_painel)
+        df_relacao_raw = pd.read_excel(file_relacao) if file_relacao.name.endswith('xlsx') else pd.read_csv(file_relacao)
         df_bruto_ct = pd.read_excel(file_contrato, header=None)
         df_titulos_raw = estruturar_titulo_limpo(file_titulo)
 
@@ -122,6 +126,7 @@ if st.button("🚀 Iniciar Auditoria"):
         df_nf['chave_unica'] = df_nf.apply(lambda r: r['CNPJ emitente'] + "_" + r['nf_limpa'] if r['nf_limpa'] != "" else "SEM_NF_" + str(r.name), axis=1)
 
         # 1. PAINEL GLOBAL (Para dar Baixas)
+        df_painel = df_painel_raw.copy()
         df_painel['nf_ref_limpa'] = df_painel['N° da Nota fiscal'].apply(extrair_nf_painel)
         df_painel['Fornecedor_UP'] = df_painel['Fornecedor'].astype(str).str.strip().str.upper()
         
@@ -138,7 +143,6 @@ if st.button("🚀 Iniciar Auditoria"):
             if 'CT/OC' in df_titulos_raw.columns:
                 pedidos_com_nf_financeiro = set(df_titulos_raw['CT/OC'].dropna().astype(str).str.split('.').str[0].str.strip().unique())
             
-            # Identificação das colunas de NF e Fornecedor no relatório de Títulos
             col_nf_tit = [c for c in df_titulos_raw.columns if 'Nota' in c or 'NF' in c or 'Documento' in c or 'Nº Doc' in c]
             col_forn_tit = [c for c in df_titulos_raw.columns if 'Fornecedor' in c or 'Credor' in c or 'Razão' in c]
             
@@ -155,10 +159,10 @@ if st.button("🚀 Iniciar Auditoria"):
                 
                 chaves_lancadas_titulos = set(titulos_com_cnpj[titulos_com_cnpj['nf_tit_limpa'] != ""]['chave_t'].unique())
 
-        # UNIFICAÇÃO DAS BAIXAS (Painel + Títulos)
         chaves_lancadas_global = chaves_lancadas_painel.union(chaves_lancadas_titulos)
 
         # 3. MUNDO LOCAL (PEDIDOS DA SUA OBRA)
+        df_relacao = df_relacao_raw.copy()
         col_obra_rel = 'Cód. obra' if 'Cód. obra' in df_relacao.columns else df_relacao.columns[0]
         df_relacao['Cód. obra_clean'] = df_relacao[col_obra_rel].apply(limpar_cod)
         df_relacao_obra = df_relacao[df_relacao['Cód. obra_clean'] == cod_obra_alvo].copy()
@@ -229,7 +233,75 @@ if st.button("🚀 Iniciar Auditoria"):
 
         resumo_contratos['Nº do pedido'] = resumo_contratos.apply(filtrar_pedidos_por_titulo, axis=1)
 
-        # SAÍDA
+        # 🔥 --- ABA 4: EM ABERTO --- 🔥
+        peds_em_aberto_lista = []
+
+        # 1. Filtro do arquivo PAINEL (Apenas a obra do usuário)
+        # Q (idx 16) = Nº Pedido | R (idx 17) = Data Confecção | U (idx 20) = Fornecedor
+        # AB (idx 27) = Data Emissão NF | AC (idx 28) = Nº NF
+        col_obra_painel = 'Cód. obra' if 'Cód. obra' in df_painel_raw.columns else df_painel_raw.columns[0]
+        df_painel_obra = df_painel_raw[df_painel_raw[col_obra_painel].apply(limpar_cod) == cod_obra_alvo].copy()
+
+        for _, row in df_painel_obra.iterrows():
+            col_q_ped = row.iloc[16] if len(row) > 16 else None
+            col_r_dt = row.iloc[17] if len(row) > 17 else None
+            col_u_forn = row.iloc[20] if len(row) > 20 else ""
+            col_ab_dt_nf = row.iloc[27] if len(row) > 27 else None
+            col_ac_num_nf = row.iloc[28] if len(row) > 28 else None
+
+            ped_num = str(col_q_ped).split('.')[0].strip() if pd.notna(col_q_ped) else ""
+            forn_nome = str(col_u_forn).strip() if pd.notna(col_u_forn) else ""
+
+            # Se não tiver data nem número de NF, está EM ABERTO
+            if ped_num != "" and ped_num.lower() != "nan" and pd.isna(col_ab_dt_nf) and pd.isna(col_ac_num_nf):
+                dt_conf = pd.to_datetime(col_r_dt, errors='coerce')
+                peds_em_aberto_lista.append({
+                    'Pedido': ped_num,
+                    'Data Confecção': dt_conf,
+                    'Fornecedor': forn_nome
+                })
+
+        # 2. Filtro do arquivo PEDIDOS (Apenas a obra do usuário)
+        # A (idx 0) = Nº Pedido | B (idx 1) = Data Confecção | H (idx 7) = Fornecedor
+        # AS (idx 44) = Data Entrada NF
+        for _, row in df_relacao_obra.iterrows():
+            col_a_ped = row.iloc[0] if len(row) > 0 else None
+            col_b_dt = row.iloc[1] if len(row) > 1 else None
+            col_h_forn = row.iloc[7] if len(row) > 7 else ""
+            col_as_dt_ent = row.iloc[44] if len(row) > 44 else None
+
+            ped_num = str(col_a_ped).split('.')[0].strip() if pd.notna(col_a_ped) else ""
+            forn_nome = str(col_h_forn).strip() if pd.notna(col_h_forn) else ""
+
+            # Se não tiver data de entrada, está EM ABERTO
+            if ped_num != "" and ped_num.lower() != "nan" and pd.isna(col_as_dt_ent):
+                dt_conf = pd.to_datetime(col_b_dt, errors='coerce')
+                peds_em_aberto_lista.append({
+                    'Pedido': ped_num,
+                    'Data Confecção': dt_conf,
+                    'Fornecedor': forn_nome
+                })
+
+        # Consolidação e Formatação da Aba 4
+        if peds_em_aberto_lista:
+            df_aberto = pd.DataFrame(peds_em_aberto_lista).dropna(subset=['Pedido'])
+            
+            # Pega a menor data de confecção e o primeiro fornecedor preenchido por pedido
+            df_aberto = df_aberto.groupby('Pedido').agg({
+                'Data Confecção': 'min',
+                'Fornecedor': lambda x: next((s for s in x if str(s).strip() != "" and str(s).lower() != "nan"), "")
+            }).reset_index()
+            
+            df_aberto['Dias em aberto'] = (hoje - df_aberto['Data Confecção']).dt.days
+            df_aberto['Data Confecção'] = df_aberto['Data Confecção'].dt.strftime('%d/%m/%Y')
+            df_aberto['Dias em aberto'] = df_aberto['Dias em aberto'].fillna(0).astype(int)
+            
+            # Garante a ordem exata das colunas: Pedido, Data Confecção, Fornecedor, Dias em aberto
+            aba4_final = df_aberto[['Pedido', 'Data Confecção', 'Fornecedor', 'Dias em aberto']].sort_values(by='Dias em aberto', ascending=False)
+        else:
+            aba4_final = pd.DataFrame(columns=['Pedido', 'Data Confecção', 'Fornecedor', 'Dias em aberto'])
+
+        # SAÍDA DAS ABAS
         cols_base = ['Núm/Série', 'CNPJ emitente', 'Emitente', 'Emissão', 'Valor']
         cols_extra = ['CNPJ Destinatário', 'Destinatário']
         
@@ -242,6 +314,7 @@ if st.button("🚀 Iniciar Auditoria"):
             aba1.to_excel(writer, sheet_name='1. PAINEL', index=False)
             aba2.to_excel(writer, sheet_name='2. PEDIDOS', index=False)
             aba3.to_excel(writer, sheet_name='3. CONTRATO', index=False)
+            aba4_final.to_excel(writer, sheet_name='4. EM ABERTO', index=False)
         
-        st.success(f"Tudo pronto! Auditoria gerada focada na Obra {cod_obra_alvo}.")
+        st.success(f"Tudo pronto! Auditoria gerada com a coluna Fornecedor na Aba 4 para a Obra {cod_obra_alvo}.")
         st.download_button("📥 Baixar Auditoria", output.getvalue(), "AUDITORIA_NF_PRODUTO.xlsx")
