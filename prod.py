@@ -11,19 +11,26 @@ st.markdown("""
 - **Baixa Automática:** Cruzamento de NFs lançadas no **Painel** + **Relatório de Títulos/Financeiro** (Todas as Obras).
 - **Status Pendentes e Pedidos:** Filtrado **exclusivamente pela SUA OBRA**.
 - **Aba 4. EM ABERTO:** Consolidação de pedidos ativos da sua obra que ainda não possuem Nota Fiscal/Entrada vinculada (com Fornecedor, Dias em Aberto e Status do Pedido, desconsiderando **Cancelados**).
+### Instruções de uso:
+1. Carregue o relatório de **NF's** - Puxar relatório do mês vigente (escolher a empresa pertinente ao CNPJ).
+2. Carregue o relatório de **Credores**.
+3. Carregue o relatório do **Painel** - Puxar relatório de no mínimo 90 dias atrás até a data vigente.
+4. Carregue o relatório de **Pedidos** - Puxar relatório de no mínimo 90 dias atrás até a data vigente.
+5. Carregue o relatório de **Contratos** - Puxar relatório de 01/01/2020 até a data vigente.
+""")
 """)
 
 codigo_obra_usuario = st.text_input("📍 Informe o código numérico da sua obra (Ex: 2):", value="").strip()
 
 col1, col2 = st.columns(2)
 with col1:
-    file_nf_prod = st.file_uploader("1. Relatório de NF's", type=['xlsx'])
-    file_forn = st.file_uploader("2. Relatório de Credores", type=['xlsx', 'csv'])
-    file_painel = st.file_uploader("3. Relatório Painel (Todas as obras)", type=['xlsx', 'csv'])
+    file_nf_prod = st.file_uploader("1. Relatório de NF's - Home / Notas Fiscais / Recepção de NF-e / Relatórios / Notas Fiscais Recebidas.", type=['xlsx'])
+    file_forn = st.file_uploader("2. Relatório de Credores - Home / Mais Opções / Apoio / Relatórios / Pessoas / Credores.", type=['xlsx'])
+    file_painel = st.file_uploader("3. Relatório Painel - Home / Suprimentos / Compras / Painel de Compras (Novo).", type=['xlsx')
 with col2:
-    file_relacao = st.file_uploader("4. Relatório Pedidos (Todas as obras)", type=['xlsx', 'csv'])
-    file_contrato = st.file_uploader("5. Relatório Contrato", type=['xlsx', 'csv'])
-    file_titulo = st.file_uploader("6. Relatório Título (Todas as obras)", type=['xlsx'])
+    file_relacao = st.file_uploader(""4. Relatório Pedidos - Home / Suprimentos / Compras / Relatórios / Pedidos de compra / Relação de Pedidos de Compra (Novo).", type=['xlsx'])
+    file_contrato = st.file_uploader("5. Relatório Contrato - Home / Suprimentos / Contratos e Medições / Relatórios / Contratos / Emissão de Contratos.", type=['xlsx'])
+    file_titulo = st.file_uploader("6. Relatório Titulo - Home / Financeiro / Contas a Pagar / Relatórios / Títulos por Data.", type=['xlsx'])
 
 def limpar_cnpj(v):
     if pd.isna(v): return ""
