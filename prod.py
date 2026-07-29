@@ -18,7 +18,6 @@ st.markdown("""
 4. Carregue o relatório de **Pedidos** - Puxar relatório de no mínimo 90 dias atrás até a data vigente.
 5. Carregue o relatório de **Contratos** - Puxar relatório de 01/01/2020 até a data vigente.
 """)
-""")
 
 codigo_obra_usuario = st.text_input("📍 Informe o código numérico da sua obra (Ex: 2):", value="").strip()
 
