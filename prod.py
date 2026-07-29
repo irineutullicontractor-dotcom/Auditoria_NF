@@ -237,8 +237,6 @@ if st.button("🚀 Iniciar Auditoria"):
         peds_em_aberto_lista = []
 
         # 1. Filtro do arquivo PAINEL (Apenas a obra do usuário)
-        # Q (idx 16) = Nº Pedido | R (idx 17) = Data Confecção | U (idx 20) = Fornecedor
-        # AB (idx 27) = Data Emissão NF | AC (idx 28) = Nº NF
         col_obra_painel = 'Cód. obra' if 'Cód. obra' in df_painel_raw.columns else df_painel_raw.columns[0]
         df_painel_obra = df_painel_raw[df_painel_raw[col_obra_painel].apply(limpar_cod) == cod_obra_alvo].copy()
 
@@ -252,9 +250,9 @@ if st.button("🚀 Iniciar Auditoria"):
             ped_num = str(col_q_ped).split('.')[0].strip() if pd.notna(col_q_ped) else ""
             forn_nome = str(col_u_forn).strip() if pd.notna(col_u_forn) else ""
 
-            # Se não tiver data nem número de NF, está EM ABERTO
             if ped_num != "" and ped_num.lower() != "nan" and pd.isna(col_ab_dt_nf) and pd.isna(col_ac_num_nf):
-                dt_conf = pd.to_datetime(col_r_dt, errors='coerce')
+                # Forçado dayfirst=True para tratar data em formato BR (DD/MM/AAAA)
+                dt_conf = pd.to_datetime(col_r_dt, dayfirst=True, errors='coerce', format='mixed')
                 peds_em_aberto_lista.append({
                     'Pedido': ped_num,
                     'Data Confecção': dt_conf,
@@ -262,8 +260,6 @@ if st.button("🚀 Iniciar Auditoria"):
                 })
 
         # 2. Filtro do arquivo PEDIDOS (Apenas a obra do usuário)
-        # A (idx 0) = Nº Pedido | B (idx 1) = Data Confecção | H (idx 7) = Fornecedor
-        # AS (idx 44) = Data Entrada NF
         for _, row in df_relacao_obra.iterrows():
             col_a_ped = row.iloc[0] if len(row) > 0 else None
             col_b_dt = row.iloc[1] if len(row) > 1 else None
@@ -273,9 +269,9 @@ if st.button("🚀 Iniciar Auditoria"):
             ped_num = str(col_a_ped).split('.')[0].strip() if pd.notna(col_a_ped) else ""
             forn_nome = str(col_h_forn).strip() if pd.notna(col_h_forn) else ""
 
-            # Se não tiver data de entrada, está EM ABERTO
             if ped_num != "" and ped_num.lower() != "nan" and pd.isna(col_as_dt_ent):
-                dt_conf = pd.to_datetime(col_b_dt, errors='coerce')
+                # Forçado dayfirst=True para tratar data em formato BR (DD/MM/AAAA)
+                dt_conf = pd.to_datetime(col_b_dt, dayfirst=True, errors='coerce', format='mixed')
                 peds_em_aberto_lista.append({
                     'Pedido': ped_num,
                     'Data Confecção': dt_conf,
@@ -286,7 +282,6 @@ if st.button("🚀 Iniciar Auditoria"):
         if peds_em_aberto_lista:
             df_aberto = pd.DataFrame(peds_em_aberto_lista).dropna(subset=['Pedido'])
             
-            # Pega a menor data de confecção e o primeiro fornecedor preenchido por pedido
             df_aberto = df_aberto.groupby('Pedido').agg({
                 'Data Confecção': 'min',
                 'Fornecedor': lambda x: next((s for s in x if str(s).strip() != "" and str(s).lower() != "nan"), "")
@@ -296,7 +291,6 @@ if st.button("🚀 Iniciar Auditoria"):
             df_aberto['Data Confecção'] = df_aberto['Data Confecção'].dt.strftime('%d/%m/%Y')
             df_aberto['Dias em aberto'] = df_aberto['Dias em aberto'].fillna(0).astype(int)
             
-            # Garante a ordem exata das colunas: Pedido, Data Confecção, Fornecedor, Dias em aberto
             aba4_final = df_aberto[['Pedido', 'Data Confecção', 'Fornecedor', 'Dias em aberto']].sort_values(by='Dias em aberto', ascending=False)
         else:
             aba4_final = pd.DataFrame(columns=['Pedido', 'Data Confecção', 'Fornecedor', 'Dias em aberto'])
@@ -316,5 +310,5 @@ if st.button("🚀 Iniciar Auditoria"):
             aba3.to_excel(writer, sheet_name='3. CONTRATO', index=False)
             aba4_final.to_excel(writer, sheet_name='4. EM ABERTO', index=False)
         
-        st.success(f"Tudo pronto! Auditoria gerada com a coluna Fornecedor na Aba 4 para a Obra {cod_obra_alvo}.")
+        st.success(f"Tudo pronto! Auditoria gerada com as datas corrigidas para o formato brasileiro na Aba 4 (Obra {cod_obra_alvo}).")
         st.download_button("📥 Baixar Auditoria", output.getvalue(), "AUDITORIA_NF_PRODUTO.xlsx")
