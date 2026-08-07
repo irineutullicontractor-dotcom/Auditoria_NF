@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import datetime
 import io
-import re
 
 st.set_page_config(page_title="Auditoria Interna NF - Produto", layout="wide")
 
@@ -41,33 +40,19 @@ def limpar_cod(v):
     if pd.isna(v): return ""
     return str(v).split('.')[0].strip().lstrip('0')
 
-def extrair_codigo_fornecedor_formatado(v):
-    """Extrai o código numérico de campos no formato '24 - JOSE ANTONIO'"""
-    if pd.isna(v): return ""
-    texto = str(v).strip()
-    if '-' in texto:
-        codigo_parte = texto.split('-')[0].strip()
-        return limpar_cod(codigo_parte)
-    return limpar_cod(texto)
+def extrair_nf_produto(v):
+    if pd.isna(v) or str(v).strip() == "" or str(v).lower() == "nan": return ""
+    v = str(v).split('/')[0]
+    v = "".join(filter(str.isdigit, v))
+    return v.lstrip('0')
 
-# Extração de NF por Origem
-def extrair_nf_arquivo_nf(v):
-    """Para o arquivo de NFs: '352/1' -> Pega antes da barra (352)"""
-    if pd.isna(v) or str(v).strip() == "": return ""
-    v = str(v).strip()
+def extrair_nf_painel(v):
+    if pd.isna(v) or str(v).strip() == "" or str(v).lower() == "nan": return ""
+    v = str(v)
     if '/' in v:
-        antes = v.split('/')[0]
-        return "".join(filter(str.isdigit, antes)).lstrip('0')
-    return "".join(filter(str.isdigit, v)).lstrip('0')
-
-def extrair_nf_painel_e_titulo(v):
-    """Para Painel ('NF/43453') e Títulos ('nr/454', 'NF / 454'): Pega depois da barra"""
-    if pd.isna(v) or str(v).strip() == "": return ""
-    v = str(v).strip()
-    if '/' in v:
-        depois = v.split('/')[1]
-        return "".join(filter(str.isdigit, depois)).lstrip('0')
-    return "".join(filter(str.isdigit, v)).lstrip('0')
+        v = v.split('/')[-1]
+    v = "".join(filter(str.isdigit, v))
+    return v.lstrip('0')
 
 def estruturar_notas_produtos_interno(file):
     df_bruto = pd.read_excel(file, header=None)
@@ -100,8 +85,12 @@ def transformar_credor_limpo(df_bruto):
             df_header = df_bruto.iloc[i+1:].copy()
             df_header.columns = [str(c).strip() for c in df_bruto.iloc[i].values]
             df_header = df_header.loc[:, df_header.columns.notna() & (df_header.columns != 'nan')]
-            
-            df_header['Cód. Fornecedor'] = df_header['Credor'].apply(extrair_codigo_fornecedor_formatado)
+            def split_safe(val):
+                s = str(val).strip()
+                return (s.split(" - ")[0], " - ".join(s.split(" - ")[1:])) if " - " in s else ("", s)
+            res_split = df_header['Credor'].apply(split_safe)
+            df_header['Cód. Fornecedor'] = res_split.apply(lambda x: x[0])
+            df_header['Fornecedor'] = res_split.apply(lambda x: x[1])
             return df_header.rename(columns={'CNPJ/CPF': 'CNPJCPF'})
     return df_bruto
 
@@ -136,32 +125,24 @@ if st.button("🚀 Iniciar Auditoria"):
         df_titulos_raw = estruturar_titulo_limpo(file_titulo)
 
         df_forn['CNPJCPF'] = df_forn['CNPJCPF'].apply(limpar_cnpj)
+        df_forn['Credor_UP'] = df_forn['Credor'].astype(str).str.strip().str.upper()
         df_nf['CNPJ emitente'] = df_nf['CNPJ emitente'].apply(limpar_cnpj)
 
-        # Trata NF do arquivo de NFs (352/1 -> 352)
-        df_nf['nf_limpa'] = df_nf['Núm/Série'].apply(extrair_nf_arquivo_nf)
+        df_nf['nf_limpa'] = df_nf['Núm/Série'].apply(extrair_nf_produto)
         df_nf['chave_unica'] = df_nf.apply(lambda r: r['CNPJ emitente'] + "_" + r['nf_limpa'] if r['nf_limpa'] != "" else "SEM_NF_" + str(r.name), axis=1)
 
-        # 1. PAINEL GLOBAL
+        # 1. PAINEL GLOBAL (Para dar Baixas)
         df_painel = df_painel_raw.copy()
-        # Trata NF do Painel (NF/43453 -> 43453)
-        df_painel['nf_ref_limpa'] = df_painel['N° da Nota fiscal'].apply(extrair_nf_painel_e_titulo)
-        # Extrai o código do fornecedor no formato "24 - JOSE ANTONIO"
-        df_painel['cod_forn_painel'] = df_painel['Fornecedor'].apply(extrair_codigo_fornecedor_formatado)
+        df_painel['nf_ref_limpa'] = df_painel['N° da Nota fiscal'].apply(extrair_nf_painel)
+        df_painel['Fornecedor_UP'] = df_painel['Fornecedor'].astype(str).str.strip().str.upper()
         
-        painel_com_cnpj = pd.merge(
-            df_painel, 
-            df_forn[['Cód. Fornecedor', 'CNPJCPF']].drop_duplicates('Cód. Fornecedor'), 
-            left_on='cod_forn_painel', 
-            right_on='Cód. Fornecedor', 
-            how='left'
-        )
+        painel_com_cnpj = pd.merge(df_painel, df_forn[['Credor_UP', 'CNPJCPF']], left_on='Fornecedor_UP', right_on='Credor_UP', how='left')
         painel_com_cnpj['CNPJCPF'] = painel_com_cnpj['CNPJCPF'].apply(limpar_cnpj)
         painel_com_cnpj['chave_p'] = painel_com_cnpj['CNPJCPF'] + "_" + painel_com_cnpj['nf_ref_limpa']
         
         chaves_lancadas_painel = set(painel_com_cnpj[painel_com_cnpj['nf_ref_limpa'] != ""]['chave_p'].unique())
 
-        # 2. TÍTULOS GLOBAL
+        # 2. FINANCEIRO / TÍTULOS GLOBAL (Para dar Baixas por NF Lançada)
         chaves_lancadas_titulos = set()
         pedidos_com_nf_financeiro = set()
         if not df_titulos_raw.empty:
@@ -175,19 +156,10 @@ if st.button("🚀 Iniciar Auditoria"):
                 c_nf = col_nf_tit[0]
                 c_forn = col_forn_tit[0]
                 
-                # Extrai código do fornecedor no formato "24 - JOSE ANTONIO"
-                df_titulos_raw['cod_credor_tit'] = df_titulos_raw[c_forn].apply(extrair_codigo_fornecedor_formatado)
-                # Trata NF de Títulos (nr/454 -> 454)
-                df_titulos_raw['nf_tit_limpa'] = df_titulos_raw[c_nf].apply(extrair_nf_painel_e_titulo)
+                df_titulos_raw['nf_tit_limpa'] = df_titulos_raw[c_nf].apply(extrair_nf_painel)
+                df_titulos_raw['Fornecedor_UP'] = df_titulos_raw[c_forn].astype(str).str.strip().str.upper()
                 
-                titulos_com_cnpj = pd.merge(
-                    df_titulos_raw, 
-                    df_forn[['Cód. Fornecedor', 'CNPJCPF']].drop_duplicates('Cód. Fornecedor'), 
-                    left_on='cod_credor_tit', 
-                    right_on='Cód. Fornecedor', 
-                    how='left'
-                )
-
+                titulos_com_cnpj = pd.merge(df_titulos_raw, df_forn[['Credor_UP', 'CNPJCPF']], left_on='Fornecedor_UP', right_on='Credor_UP', how='left')
                 titulos_com_cnpj['CNPJCPF'] = titulos_com_cnpj['CNPJCPF'].apply(limpar_cnpj)
                 titulos_com_cnpj['chave_t'] = titulos_com_cnpj['CNPJCPF'] + "_" + titulos_com_cnpj['nf_tit_limpa']
                 
@@ -195,13 +167,12 @@ if st.button("🚀 Iniciar Auditoria"):
 
         chaves_lancadas_global = chaves_lancadas_painel.union(chaves_lancadas_titulos)
 
-        # 3. PEDIDOS DA OBRA
+        # 3. MUNDO LOCAL (PEDIDOS DA SUA OBRA)
         df_relacao = df_relacao_raw.copy()
         col_obra_rel = 'Cód. obra' if 'Cód. obra' in df_relacao.columns else df_relacao.columns[0]
         df_relacao['Cód. obra_clean'] = df_relacao[col_obra_rel].apply(limpar_cod)
         df_relacao_obra = df_relacao[df_relacao['Cód. obra_clean'] == cod_obra_alvo].copy()
 
-        # No pedido o código do fornecedor vem isolado
         df_relacao_obra['Cód. fornecedor'] = df_relacao_obra['Cód. fornecedor'].apply(limpar_cod)
         rel_obra_com_cnpj = pd.merge(df_relacao_obra, df_forn[['Cód. Fornecedor', 'CNPJCPF']], left_on='Cód. fornecedor', right_on='Cód. Fornecedor', how='left')
         rel_obra_com_cnpj['CNPJCPF'] = rel_obra_com_cnpj['CNPJCPF'].apply(limpar_cnpj)
@@ -268,9 +239,12 @@ if st.button("🚀 Iniciar Auditoria"):
 
         resumo_contratos['Nº do pedido'] = resumo_contratos.apply(filtrar_pedidos_por_titulo, axis=1)
 
-        # ABA 4: EM ABERTO
+        # 🔥 --- ABA 4: EM ABERTO --- 🔥
         peds_em_aberto_lista = []
 
+        # 1. Filtro do arquivo PAINEL (Apenas a obra do usuário)
+        # Q (idx 16) = Nº Pedido | R (idx 17) = Data Confecção | S (idx 18) = Status Pedido | U (idx 20) = Fornecedor
+        # AB (idx 27) = Data Emissão NF | AC (idx 28) = Nº NF
         col_obra_painel = 'Cód. obra' if 'Cód. obra' in df_painel_raw.columns else df_painel_raw.columns[0]
         df_painel_obra = df_painel_raw[df_painel_raw[col_obra_painel].apply(limpar_cod) == cod_obra_alvo].copy()
 
@@ -282,6 +256,7 @@ if st.button("🚀 Iniciar Auditoria"):
             col_ab_dt_nf = row.iloc[27] if len(row) > 27 else None
             col_ac_num_nf = row.iloc[28] if len(row) > 28 else None
 
+            # Desconsidera se estiver CANCELADO
             if "cancelado" in col_s_status.lower():
                 continue
 
@@ -297,6 +272,9 @@ if st.button("🚀 Iniciar Auditoria"):
                     'Status Pedido': col_s_status
                 })
 
+        # 2. Filtro do arquivo PEDIDOS (Apenas a obra do usuário)
+        # A (idx 0) = Nº Pedido | B (idx 1) = Data Confecção | H (idx 7) = Fornecedor
+        # AO (idx 40) = Status Pedido | AS (idx 44) = Data Entrada NF
         for _, row in df_relacao_obra.iterrows():
             col_a_ped = row.iloc[0] if len(row) > 0 else None
             col_b_dt = row.iloc[1] if len(row) > 1 else None
@@ -304,6 +282,7 @@ if st.button("🚀 Iniciar Auditoria"):
             col_ao_status = str(row.iloc[40]).strip() if len(row) > 40 and pd.notna(row.iloc[40]) else ""
             col_as_dt_ent = row.iloc[44] if len(row) > 44 else None
 
+            # Desconsidera se estiver CANCELADO
             if "cancelado" in col_ao_status.lower():
                 continue
 
@@ -319,6 +298,7 @@ if st.button("🚀 Iniciar Auditoria"):
                     'Status Pedido': col_ao_status
                 })
 
+        # Consolidação e Formatação da Aba 4
         if peds_em_aberto_lista:
             df_aberto = pd.DataFrame(peds_em_aberto_lista).dropna(subset=['Pedido'])
             
@@ -332,6 +312,7 @@ if st.button("🚀 Iniciar Auditoria"):
             df_aberto['Data Confecção'] = df_aberto['Data Confecção'].dt.strftime('%d/%m/%Y')
             df_aberto['Dias em aberto'] = df_aberto['Dias em aberto'].fillna(0).astype(int)
             
+            # Ordenação final com a Coluna E: Status Pedido
             aba4_final = df_aberto[['Pedido', 'Data Confecção', 'Fornecedor', 'Dias em aberto', 'Status Pedido']].sort_values(by='Dias em aberto', ascending=False)
         else:
             aba4_final = pd.DataFrame(columns=['Pedido', 'Data Confecção', 'Fornecedor', 'Dias em aberto', 'Status Pedido'])
@@ -351,5 +332,5 @@ if st.button("🚀 Iniciar Auditoria"):
             aba3.to_excel(writer, sheet_name='3. CONTRATO', index=False)
             aba4_final.to_excel(writer, sheet_name='4. EM ABERTO', index=False)
         
-        st.success("Tudo pronto! Relatório atualizado e ajustado com as regras exatas das colunas.")
+        st.success(f"Tudo pronto! Auditoria gerada com a Coluna E (Status Pedido) na Aba 4 (Obra {cod_obra_alvo}).")
         st.download_button("📥 Baixar Auditoria", output.getvalue(), "AUDITORIA_NF_PRODUTO.xlsx")
