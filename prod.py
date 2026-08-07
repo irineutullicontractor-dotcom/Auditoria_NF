@@ -56,12 +56,18 @@ def extrair_nf_painel(v):
     v = "".join(filter(str.isdigit, v))
     return v.lstrip('0')
 
+# CORREÇÃO AQUI: No relatório de títulos pega ANTES da barra [0]
 def extrair_nf_titulo(v):
     if pd.isna(v) or str(v).strip() == "" or str(v).lower() == "nan": return ""
     v = str(v).strip()
-    if '/' in v:
-        v = v.split('/')[-1]
+    
+    # Remove textos padrão de títulos como NFSE, DUP, etc.
     v = re.sub(r'(?i)(NFE|NFSE|NF|DUP|FAT|DOC|ADT|ADIANT)', '', v)
+    
+    # Se houver barra (ex: 1000/1), pega o que está ANTES da barra (1000)
+    if '/' in v:
+        v = v.split('/')[0]
+        
     v = "".join(filter(str.isdigit, v))
     return v.lstrip('0')
 
@@ -155,7 +161,7 @@ if st.button("🚀 Iniciar Auditoria"):
         
         chaves_lancadas_painel = set(painel_com_cnpj[painel_com_cnpj['nf_ref_limpa'] != ""]['chave_p'].unique())
 
-        # 2. FINANCEIRO / TÍTULOS GLOBAL (TRATAMENTO SEGURO DE ERROS)
+        # 2. FINANCEIRO / TÍTULOS GLOBAL
         chaves_lancadas_titulos = set()
         pedidos_com_nf_financeiro = set()
         mapa_titulos_doc = {}
@@ -171,9 +177,11 @@ if st.button("🚀 Iniciar Auditoria"):
                 c_doc = col_doc_tit[0]
                 c_credor = col_credor_tit[0]
                 
-                # Extração segura do código do credor usando string accessor nativo
+                # Tratamento seguro contra erros do split no credor
                 credor_str = df_titulos_raw[c_credor].fillna('').astype(str)
                 df_titulos_raw['cod_credor_tit'] = credor_str.str.split('-').str[0].apply(limpar_cod)
+                
+                # Aplicação da nova função corrigida de extração do título
                 df_titulos_raw['nf_tit_limpa'] = df_titulos_raw[c_doc].apply(extrair_nf_titulo)
                 
                 titulos_com_cnpj = pd.merge(
