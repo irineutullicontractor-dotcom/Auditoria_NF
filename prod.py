@@ -39,16 +39,15 @@ def limpar_cnpj(v):
 
 def limpar_cod(v):
     if pd.isna(v): return ""
-    return str(v).split('.')[0].strip().lstrip('0')
+    s = str(v).split('.')[0].strip()
+    return s.lstrip('0')
 
-# Extração da NF do Relatório de NF (Coluna A / Núm/Série): Pega antes da barra
 def extrair_nf_produto(v):
     if pd.isna(v) or str(v).strip() == "" or str(v).lower() == "nan": return ""
     v = str(v).split('/')[0]
     v = "".join(filter(str.isdigit, v))
     return v.lstrip('0')
 
-# Extração da NF do Painel: Pega depois da barra
 def extrair_nf_painel(v):
     if pd.isna(v) or str(v).strip() == "" or str(v).lower() == "nan": return ""
     v = str(v)
@@ -57,7 +56,6 @@ def extrair_nf_painel(v):
     v = "".join(filter(str.isdigit, v))
     return v.lstrip('0')
 
-# Extração CORRETA do Relatório de Títulos (Coluna Documento): Limpa prefixos como NFE, NFSE, NF, DUP e pega o número
 def extrair_nf_titulo(v):
     if pd.isna(v) or str(v).strip() == "" or str(v).lower() == "nan": return ""
     v = str(v).strip()
@@ -157,7 +155,7 @@ if st.button("🚀 Iniciar Auditoria"):
         
         chaves_lancadas_painel = set(painel_com_cnpj[painel_com_cnpj['nf_ref_limpa'] != ""]['chave_p'].unique())
 
-        # 2. FINANCEIRO / TÍTULOS GLOBAL (CORRIGIDO)
+        # 2. FINANCEIRO / TÍTULOS GLOBAL (TRATAMENTO SEGURO DE ERROS)
         chaves_lancadas_titulos = set()
         pedidos_com_nf_financeiro = set()
         mapa_titulos_doc = {}
@@ -173,19 +171,24 @@ if st.button("🚀 Iniciar Auditoria"):
                 c_doc = col_doc_tit[0]
                 c_credor = col_credor_tit[0]
                 
-                # Extrai o código do credor (ex: "9829" de "9829 - IRST SOLUÇÕES...")
-                df_titulos_raw['cod_credor_tit'] = df_titulos_raw[c_credor].astype(str).apply(lambda x: limpar_cod(x.split('-')[0]))
+                # Extração segura do código do credor usando string accessor nativo
+                credor_str = df_titulos_raw[c_credor].fillna('').astype(str)
+                df_titulos_raw['cod_credor_tit'] = credor_str.str.split('-').str[0].apply(limpar_cod)
                 df_titulos_raw['nf_tit_limpa'] = df_titulos_raw[c_doc].apply(extrair_nf_titulo)
                 
-                # Busca CNPJ via Código do Credor no cadastro de credores
-                titulos_com_cnpj = pd.merge(df_titulos_raw, df_forn[['Cód. Fornecedor', 'CNPJCPF']].drop_duplicates('Cód. Fornecedor'), left_on='cod_credor_tit', right_on='Cód. Fornecedor', how='left')
+                titulos_com_cnpj = pd.merge(
+                    df_titulos_raw, 
+                    df_forn[['Cód. Fornecedor', 'CNPJCPF']].drop_duplicates('Cód. Fornecedor'), 
+                    left_on='cod_credor_tit', 
+                    right_on='Cód. Fornecedor', 
+                    how='left'
+                )
                 titulos_com_cnpj['CNPJCPF'] = titulos_com_cnpj['CNPJCPF'].apply(limpar_cnpj)
                 titulos_com_cnpj['chave_t'] = titulos_com_cnpj['CNPJCPF'] + "_" + titulos_com_cnpj['nf_tit_limpa']
                 
                 df_tit_validos = titulos_com_cnpj[titulos_com_cnpj['nf_tit_limpa'] != ""]
                 chaves_lancadas_titulos = set(df_tit_validos['chave_t'].unique())
                 
-                # Mapeia a coluna de documento do título para exibir na NF
                 for _, r_t in df_tit_validos.iterrows():
                     mapa_titulos_doc[r_t['chave_t']] = r_t[c_doc]
 
@@ -206,7 +209,6 @@ if st.button("🚀 Iniciar Auditoria"):
         # ABA 1: PAINEL
         resumo_painel = pd.merge(df_nf, painel_com_cnpj[['chave_p', 'N° da Nota fiscal']].drop_duplicates('chave_p'), left_on='chave_unica', right_on='chave_p', how='left')
         
-        # Preenche a coluna 'N° da Nota fiscal' com o documento do título caso venha do financeiro
         resumo_painel['N° da Nota fiscal'] = resumo_painel.apply(
             lambda r: mapa_titulos_doc.get(r['chave_unica'], r['N° da Nota fiscal']) if pd.isna(r['N° da Nota fiscal']) or str(r['N° da Nota fiscal']).strip() == "" else r['N° da Nota fiscal'], 
             axis=1
@@ -352,5 +354,5 @@ if st.button("🚀 Iniciar Auditoria"):
             aba3.to_excel(writer, sheet_name='3. CONTRATO', index=False)
             aba4_final.to_excel(writer, sheet_name='4. EM ABERTO', index=False)
         
-        st.success("Auditoria gerada! Cruzamento com Títulos e NFs restaurado e corrigido.")
+        st.success("Tudo certo! Auditoria executada com sucesso.")
         st.download_button("📥 Baixar Auditoria", output.getvalue(), "AUDITORIA_NF_PRODUTO.xlsx")
