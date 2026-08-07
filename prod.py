@@ -41,14 +41,14 @@ def limpar_cod(v):
     if pd.isna(v): return ""
     return str(v).split('.')[0].strip().lstrip('0')
 
-# --- REGRA DA COLUNA A DO RELATÓRIO DE NF: SEMPRE O NÚMERO ANTES DA BARRA ---
+# Extração da NF do Relatório de NF (Coluna A / Núm/Série): Pega antes da barra
 def extrair_nf_produto(v):
     if pd.isna(v) or str(v).strip() == "" or str(v).lower() == "nan": return ""
-    v = str(v).split('/')[0] # Pega exatamente o que está ANTES da barra
+    v = str(v).split('/')[0]
     v = "".join(filter(str.isdigit, v))
     return v.lstrip('0')
 
-# --- REGRA DO PAINEL ---
+# Extração da NF do Painel: Pega depois da barra
 def extrair_nf_painel(v):
     if pd.isna(v) or str(v).strip() == "" or str(v).lower() == "nan": return ""
     v = str(v)
@@ -57,14 +57,13 @@ def extrair_nf_painel(v):
     v = "".join(filter(str.isdigit, v))
     return v.lstrip('0')
 
-# --- REGRA DO TÍTULO (APENAS TRATA OS PREFIXOS DE TÍTULOS COMO NFE / 1000) ---
+# Extração CORRETA do Relatório de Títulos (Coluna Documento): Limpa prefixos como NFE, NFSE, NF, DUP e pega o número
 def extrair_nf_titulo(v):
     if pd.isna(v) or str(v).strip() == "" or str(v).lower() == "nan": return ""
     v = str(v).strip()
     if '/' in v:
         v = v.split('/')[-1]
-    # Limpa letras/prefixos como NFE, NFSE, NF, DUP, etc.
-    v = re.sub(r'(?i)(NFE|NFSE|NF|DUP|FAT|DOC)', '', v)
+    v = re.sub(r'(?i)(NFE|NFSE|NF|DUP|FAT|DOC|ADT|ADIANT)', '', v)
     v = "".join(filter(str.isdigit, v))
     return v.lstrip('0')
 
@@ -99,11 +98,13 @@ def transformar_credor_limpo(df_bruto):
             df_header = df_bruto.iloc[i+1:].copy()
             df_header.columns = [str(c).strip() for c in df_bruto.iloc[i].values]
             df_header = df_header.loc[:, df_header.columns.notna() & (df_header.columns != 'nan')]
+            
             def split_safe(val):
                 s = str(val).strip()
                 return (s.split(" - ")[0], " - ".join(s.split(" - ")[1:])) if " - " in s else ("", s)
+            
             res_split = df_header['Credor'].apply(split_safe)
-            df_header['Cód. Fornecedor'] = res_split.apply(lambda x: x[0])
+            df_header['Cód. Fornecedor'] = res_split.apply(lambda x: limpar_cod(x[0]))
             df_header['Fornecedor'] = res_split.apply(lambda x: x[1])
             return df_header.rename(columns={'CNPJ/CPF': 'CNPJCPF'})
     return df_bruto
@@ -142,11 +143,10 @@ if st.button("🚀 Iniciar Auditoria"):
         df_forn['Credor_UP'] = df_forn['Credor'].astype(str).str.strip().str.upper()
         df_nf['CNPJ emitente'] = df_nf['CNPJ emitente'].apply(limpar_cnpj)
 
-        # NF Produto: extração idêntica ao original (número ANTES da barra)
         df_nf['nf_limpa'] = df_nf['Núm/Série'].apply(extrair_nf_produto)
         df_nf['chave_unica'] = df_nf.apply(lambda r: r['CNPJ emitente'] + "_" + r['nf_limpa'] if r['nf_limpa'] != "" else "SEM_NF_" + str(r.name), axis=1)
 
-        # 1. PAINEL GLOBAL (Comportamento Original Restaurado)
+        # 1. PAINEL GLOBAL
         df_painel = df_painel_raw.copy()
         df_painel['nf_ref_limpa'] = df_painel['N° da Nota fiscal'].apply(extrair_nf_painel)
         df_painel['Fornecedor_UP'] = df_painel['Fornecedor'].astype(str).str.strip().str.upper()
@@ -157,9 +157,11 @@ if st.button("🚀 Iniciar Auditoria"):
         
         chaves_lancadas_painel = set(painel_com_cnpj[painel_com_cnpj['nf_ref_limpa'] != ""]['chave_p'].unique())
 
-        # 2. FINANCEIRO / TÍTULOS GLOBAL (Buscando CNPJ via Credores como originalmente, apenas corrigindo a leitura da NF)
+        # 2. FINANCEIRO / TÍTULOS GLOBAL (CORRIGIDO)
         chaves_lancadas_titulos = set()
         pedidos_com_nf_financeiro = set()
+        mapa_titulos_doc = {}
+
         if not df_titulos_raw.empty:
             if 'CT/OC' in df_titulos_raw.columns:
                 pedidos_com_nf_financeiro = set(df_titulos_raw['CT/OC'].dropna().astype(str).str.split('.').str[0].str.strip().unique())
@@ -171,15 +173,21 @@ if st.button("🚀 Iniciar Auditoria"):
                 c_doc = col_doc_tit[0]
                 c_credor = col_credor_tit[0]
                 
+                # Extrai o código do credor (ex: "9829" de "9829 - IRST SOLUÇÕES...")
+                df_titulos_raw['cod_credor_tit'] = df_titulos_raw[c_credor].astype(str).apply(lambda x: limpar_cod(x.split('-')[0]))
                 df_titulos_raw['nf_tit_limpa'] = df_titulos_raw[c_doc].apply(extrair_nf_titulo)
-                df_titulos_raw['Fornecedor_UP'] = df_titulos_raw[c_credor].astype(str).str.strip().str.upper()
                 
-                # Merge padrão por Fornecedor/Credor original para pegar o CNPJ
-                titulos_com_cnpj = pd.merge(df_titulos_raw, df_forn[['Credor_UP', 'CNPJCPF']], left_on='Fornecedor_UP', right_on='Credor_UP', how='left')
+                # Busca CNPJ via Código do Credor no cadastro de credores
+                titulos_com_cnpj = pd.merge(df_titulos_raw, df_forn[['Cód. Fornecedor', 'CNPJCPF']].drop_duplicates('Cód. Fornecedor'), left_on='cod_credor_tit', right_on='Cód. Fornecedor', how='left')
                 titulos_com_cnpj['CNPJCPF'] = titulos_com_cnpj['CNPJCPF'].apply(limpar_cnpj)
                 titulos_com_cnpj['chave_t'] = titulos_com_cnpj['CNPJCPF'] + "_" + titulos_com_cnpj['nf_tit_limpa']
                 
-                chaves_lancadas_titulos = set(titulos_com_cnpj[titulos_com_cnpj['nf_tit_limpa'] != ""]['chave_t'].unique())
+                df_tit_validos = titulos_com_cnpj[titulos_com_cnpj['nf_tit_limpa'] != ""]
+                chaves_lancadas_titulos = set(df_tit_validos['chave_t'].unique())
+                
+                # Mapeia a coluna de documento do título para exibir na NF
+                for _, r_t in df_tit_validos.iterrows():
+                    mapa_titulos_doc[r_t['chave_t']] = r_t[c_doc]
 
         chaves_lancadas_global = chaves_lancadas_painel.union(chaves_lancadas_titulos)
 
@@ -198,6 +206,12 @@ if st.button("🚀 Iniciar Auditoria"):
         # ABA 1: PAINEL
         resumo_painel = pd.merge(df_nf, painel_com_cnpj[['chave_p', 'N° da Nota fiscal']].drop_duplicates('chave_p'), left_on='chave_unica', right_on='chave_p', how='left')
         
+        # Preenche a coluna 'N° da Nota fiscal' com o documento do título caso venha do financeiro
+        resumo_painel['N° da Nota fiscal'] = resumo_painel.apply(
+            lambda r: mapa_titulos_doc.get(r['chave_unica'], r['N° da Nota fiscal']) if pd.isna(r['N° da Nota fiscal']) or str(r['N° da Nota fiscal']).strip() == "" else r['N° da Nota fiscal'], 
+            axis=1
+        )
+
         def status_painel(r):
             if r['chave_unica'] in chaves_lancadas_global: return "✅ NF Lançada"
             if r['CNPJ emitente'] in cnpjs_com_pedido_na_obra: return "⚠️ Para Verificação"
@@ -338,5 +352,5 @@ if st.button("🚀 Iniciar Auditoria"):
             aba3.to_excel(writer, sheet_name='3. CONTRATO', index=False)
             aba4_final.to_excel(writer, sheet_name='4. EM ABERTO', index=False)
         
-        st.success("Regras originais de vínculo completamente restauradas!")
+        st.success("Auditoria gerada! Cruzamento com Títulos e NFs restaurado e corrigido.")
         st.download_button("📥 Baixar Auditoria", output.getvalue(), "AUDITORIA_NF_PRODUTO.xlsx")
