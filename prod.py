@@ -83,6 +83,7 @@ def estruturar_credor(file):
             col_cred = 'Credor'
             col_cnpj = 'CNPJ/CPF' if 'CNPJ/CPF' in df_header.columns else 'CNPJ'
             
+            df_header['Nome_Credor'] = df_header[col_cred].astype(str).str.strip()
             df_header['Cod_Forn'] = df_header[col_cred].apply(limpar_cod)
             df_header['CNPJ_Clean'] = df_header[col_cnpj].apply(limpar_cnpj_cpf)
             return df_header
@@ -136,10 +137,11 @@ if st.button("🚀 Iniciar Auditoria"):
         cod_obra_alvo = limpar_cod(codigo_obra_usuario)
         hoje = pd.to_datetime(datetime.date.today())
 
-        # 1. DE-PARA GLOBAL DE FORNECEDORES (CÓDIGO <-> CNPJ)
+        # 1. DE-PARA GLOBAL DE FORNECEDORES (CÓDIGO <-> CNPJ / CÓDIGO <-> NOME COMPLETO)
         df_credor = estruturar_credor(file_forn)
         mapa_cod_to_cnpj = dict(zip(df_credor['Cod_Forn'], df_credor['CNPJ_Clean']))
         mapa_cnpj_to_cod = dict(zip(df_credor['CNPJ_Clean'], df_credor['Cod_Forn']))
+        mapa_cod_to_nome_credor = dict(zip(df_credor['Cod_Forn'], df_credor['Nome_Credor']))
 
         # 2. CARREGAR E TRATAR NF PRODUTO
         df_nf = estruturar_nf_produto(file_nf_prod)
@@ -283,7 +285,7 @@ if st.button("🚀 Iniciar Auditoria"):
 
         resumo_contratos['Pedido'] = resumo_contratos.apply(filtrar_pedidos_fin, axis=1)
 
-        # --- ABA 4: EM ABERTO (LÓGICA AJUSTADA CONFORME SOLICITADO) ---
+        # --- ABA 4: EM ABERTO ---
         peds_aberto = []
 
         # 1. Processamento da planilha PAINEL
@@ -292,22 +294,21 @@ if st.button("🚀 Iniciar Auditoria"):
             st_p = str(row['Situação do pedido']).strip() if pd.notna(row['Situação do pedido']) else ""
             st_lower = st_p.lower()
             
-            # Filtra fora os totalmente entregues ou cancelados
             if "totalmente" in st_lower or "cancelado" in st_lower or "fechado" in st_lower:
                 continue
                 
             num_nf = str(row['N° da Nota fiscal']).strip() if pd.notna(row['N° da Nota fiscal']) else ""
-            # Se possui NF totalmente associada, ignora
             if num_nf != "" and num_nf != "nan":
                 continue
 
             ped_n = limpar_cod(row['N° do Pedido'])
             if ped_n:
                 dt_c = pd.to_datetime(row['Data do pedido'], dayfirst=True, errors='coerce')
+                forn_painel = str(row.get('Fornecedor', '')).strip()
                 peds_aberto.append({
                     'Pedido': ped_n,
                     'Data Confecção': dt_c,
-                    'Fornecedor': row.get('Fornecedor', ''),
+                    'Fornecedor': forn_painel,
                     'Status Pedido': st_p if st_p else "Pendente"
                 })
 
@@ -316,11 +317,9 @@ if st.button("🚀 Iniciar Auditoria"):
             st_p = str(row['Status entrega']).strip() if pd.notna(row['Status entrega']) else ""
             st_lower = st_p.lower()
             
-            # Filtra fora os totalmente entregues ou cancelados
             if "totalmente" in st_lower or "atendido" in st_lower or "cancelado" in st_lower:
                 continue
 
-            # Se houver coluna de data de entrega total preenchida, descarta
             dt_ent = row.get('Data entregue', None)
             if pd.notna(dt_ent) and str(dt_ent).strip() != "":
                 continue
@@ -328,11 +327,19 @@ if st.button("🚀 Iniciar Auditoria"):
             ped_n = limpar_cod(row['Nº do pedido'])
             if ped_n:
                 dt_c = pd.to_datetime(row['Data pedido'], dayfirst=True, errors='coerce')
-                forn_nome = row.get('Razão social fornecedor', row.get('Cód. fornecedor', ''))
+                cod_f = row['Cod_Forn']
+                
+                # Montagem do Nome formatado ("CÓDIGO - NOME")
+                if cod_f in mapa_cod_to_nome_credor:
+                    forn_formatado = mapa_cod_to_nome_credor[cod_f]
+                else:
+                    nome_f = str(row.get('Fornecedor', row.get('Razão social fornecedor', ''))).strip()
+                    forn_formatado = f"{cod_f} - {nome_f}" if cod_f and nome_f else (cod_f or nome_f)
+
                 peds_aberto.append({
                     'Pedido': ped_n,
                     'Data Confecção': dt_c,
-                    'Fornecedor': forn_nome,
+                    'Fornecedor': forn_formatado,
                     'Status Pedido': st_p if st_p else "Pendente"
                 })
 
@@ -340,7 +347,6 @@ if st.button("🚀 Iniciar Auditoria"):
         if peds_aberto:
             df_aberto = pd.DataFrame(peds_aberto).dropna(subset=['Pedido'])
             
-            # Agrupa por Pedido para evitar duplicatas entre as duas fontes
             df_aberto = df_aberto.groupby('Pedido').agg({
                 'Data Confecção': 'min',
                 'Fornecedor': 'first',
