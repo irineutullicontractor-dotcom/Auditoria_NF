@@ -219,7 +219,7 @@ if st.button("🚀 Iniciar Auditoria"):
 
         # --- ABA 2: PEDIDOS ---
         peds_painel = df_painel[df_painel['Cod_Obra_Clean'] == cod_obra_alvo].groupby('CNPJ_Painel')['N° do Pedido'].apply(lambda x: list(x.dropna().astype(str))).to_dict()
-        peds_rel = df_relacao_obra.groupby('CNPJ_Forn')['Pedido'].apply(lambda x: list(x.dropna().astype(str))).to_dict()
+        peds_rel = df_relacao_obra.groupby('CNPJ_Forn')['Nº do pedido'].apply(lambda x: list(x.dropna().astype(str))).to_dict()
 
         def consolidar_pedidos_obra(cnpj):
             l1 = peds_painel.get(cnpj, [])
