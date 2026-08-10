@@ -67,15 +67,6 @@ def extrair_numero_antes_barra(v):
     num = apenas_numeros(s)
     return num.lstrip('0')
 
-def encontrar_coluna(df, termos_busca):
-    """Localiza o nome exato da coluna no DataFrame baseado em termos de busca aproximados."""
-    for col in df.columns:
-        col_str = str(col).strip().lower()
-        for termo in termos_busca:
-            if termo in col_str:
-                return col
-    return None
-
 # --- CARREGADORES DE ARQUIVOS ROBUSTOS ---
 
 def carregar_df(file, skiprows=0, header=0):
@@ -160,18 +151,11 @@ if st.button("🚀 Iniciar Auditoria"):
 
         # 3. TRATAR PAINEL DE COMPRAS
         df_painel = carregar_df(file_painel)
-        df_painel.columns = [str(c).strip() for c in df_painel.columns]
-        
-        col_forn_p = encontrar_coluna(df_painel, ['fornecedor', 'credor']) or df_painel.columns[0]
-        col_nf_p = encontrar_coluna(df_painel, ['nota fiscal', 'n° da nota', 'nfe']) or df_painel.columns[1]
-        col_obra_p = encontrar_coluna(df_painel, ['obra', 'cód. obra']) or df_painel.columns[2]
-        col_ped_p = encontrar_coluna(df_painel, ['n° do pedido', 'pedido', 'nº pedido']) or df_painel.columns[3]
-
-        df_painel['Cod_Forn'] = df_painel[col_forn_p].apply(limpar_cod)
+        df_painel['Cod_Forn'] = df_painel['Fornecedor'].apply(limpar_cod)
         df_painel['CNPJ_Painel'] = df_painel['Cod_Forn'].map(mapa_cod_to_cnpj).fillna("")
-        df_painel['nf_limpa'] = df_painel[col_nf_p].apply(extrair_numero_apos_barra)
+        df_painel['nf_limpa'] = df_painel['N° da Nota fiscal'].apply(extrair_numero_apos_barra)
         df_painel['chave_p'] = df_painel['CNPJ_Painel'] + "_" + df_painel['nf_limpa']
-        df_painel['Cod_Obra_Clean'] = df_painel[col_obra_p].apply(limpar_cod)
+        df_painel['Cod_Obra_Clean'] = df_painel['Obra'].apply(limpar_cod)
 
         # Chaves de NFs Lançadas no Painel (Global)
         chaves_lancadas_painel = set(df_painel[df_painel['nf_limpa'] != ""]['chave_p'].unique())
@@ -196,16 +180,11 @@ if st.button("🚀 Iniciar Auditoria"):
 
         # 5. TRATAR PEDIDOS E MAPEAMENTO LOCAL DA OBRA
         df_relacao = carregar_df(file_relacao)
-        df_relacao.columns = [str(c).strip() for c in df_relacao.columns]
-
-        col_obra_rel = encontrar_coluna(df_relacao, ['cód. obra', 'obra', 'cod obra']) or df_relacao.columns[0]
-        col_ped_rel = encontrar_coluna(df_relacao, ['pedido', 'n° do pedido', 'nº pedido']) or 'Pedido'
-        col_forn_rel = encontrar_coluna(df_relacao, ['cód. fornecedor', 'fornecedor', 'cod. fornecedor']) or df_relacao.columns[1]
-
+        col_obra_rel = 'Cód. obra' if 'Cód. obra' in df_relacao.columns else df_relacao.columns[0]
         df_relacao['Obra_Clean'] = df_relacao[col_obra_rel].apply(limpar_cod)
         df_relacao_obra = df_relacao[df_relacao['Obra_Clean'] == cod_obra_alvo].copy()
 
-        df_relacao_obra['Cod_Forn'] = df_relacao_obra[col_forn_rel].apply(limpar_cod)
+        df_relacao_obra['Cod_Forn'] = df_relacao_obra['Cód. fornecedor'].apply(limpar_cod)
         df_relacao_obra['CNPJ_Forn'] = df_relacao_obra['Cod_Forn'].map(mapa_cod_to_cnpj).fillna("")
 
         # CNPJs com histórico de Pedidos na Obra
@@ -216,20 +195,21 @@ if st.button("🚀 Iniciar Auditoria"):
         # --- ABA 1: PAINEL ---
         resumo_painel = pd.merge(
             df_nf, 
-            df_painel[['chave_p', col_nf_p]].drop_duplicates('chave_p'), 
+            df_painel[['chave_p', 'N° da Nota fiscal']].drop_duplicates('chave_p'), 
             left_on='chave_unica', 
             right_on='chave_p', 
             how='left'
         )
-        if col_nf_p != 'N° da Nota fiscal':
-            resumo_painel.rename(columns={col_nf_p: 'N° da Nota fiscal'}, inplace=True)
 
         def definir_status_painel(r):
+            # 1. Se Título/Nota fiscal avulsa estiver preenchido
             col_avulsa = 'Título/Nota fiscal avulsa' if 'Título/Nota fiscal avulsa' in r else None
             if col_avulsa and pd.notna(r[col_avulsa]) and str(r[col_avulsa]).strip() != "":
                 return "✅ NF Lançada"
+            # 2. Se achou no Global
             if r['chave_unica'] in chaves_lancadas_global:
                 return "✅ NF Lançada"
+            # 3. Regra restrita à OBRA selecionada
             if r['CNPJ emitente'] in cnpjs_com_historico_na_obra:
                 return "⚠️ Para Verificação"
             return "❌ Sem Histórico"
@@ -237,8 +217,8 @@ if st.button("🚀 Iniciar Auditoria"):
         resumo_painel['Status'] = resumo_painel.apply(definir_status_painel, axis=1)
 
         # --- ABA 2: PEDIDOS ---
-        peds_painel = df_painel[df_painel['Cod_Obra_Clean'] == cod_obra_alvo].groupby('CNPJ_Painel')[col_ped_p].apply(lambda x: list(x.dropna().astype(str))).to_dict()
-        peds_rel = df_relacao_obra.groupby('CNPJ_Forn')[col_ped_rel].apply(lambda x: list(x.dropna().astype(str))).to_dict() if col_ped_rel in df_relacao_obra.columns else {}
+        peds_painel = df_painel[df_painel['Cod_Obra_Clean'] == cod_obra_alvo].groupby('CNPJ_Painel')['N° do Pedido'].apply(lambda x: list(x.dropna().astype(str))).to_dict()
+        peds_rel = df_relacao_obra.groupby('CNPJ_Forn')['Pedido'].apply(lambda x: list(x.dropna().astype(str))).to_dict()
 
         def consolidar_pedidos_obra(cnpj):
             l1 = peds_painel.get(cnpj, [])
@@ -266,6 +246,7 @@ if st.button("🚀 Iniciar Auditoria"):
 
         resumo_contratos = pd.merge(resumo_pedidos, cts_agrupados, left_on='CNPJ emitente', right_on='CNPJ', how='left')
 
+        # Baixa adicional com a planilha TITULO na Aba Contrato
         titulos_map = df_titulos[['chave_t', 'Documento']].drop_duplicates('chave_t').set_index('chave_t')['Documento'].to_dict() if not df_titulos.empty else {}
 
         def definir_status_contrato(r):
@@ -289,37 +270,34 @@ if st.button("🚀 Iniciar Auditoria"):
 
         resumo_contratos['Pedido'] = resumo_contratos.apply(filtrar_pedidos_fin, axis=1)
 
-        # --- ABA 4: EM ABERTO ---
+        # --- ABA 4: EM ABERTO (MANTIDA) ---
         peds_aberto = []
         for _, row in df_painel[df_painel['Cod_Obra_Clean'] == cod_obra_alvo].iterrows():
-            st_p = str(row.get('Situação do pedido', '')).strip()
+            st_p = str(row['Situação do pedido']).strip() if pd.notna(row['Situação do pedido']) else ""
             if "cancelado" in st_p.lower(): continue
-            ped_n = limpar_cod(row.get(col_ped_p, ''))
+            ped_n = limpar_cod(row['N° do Pedido'])
             dt_nf = row.get('Data Emissão NF', None)
             num_nf = row.get('N° NF', None)
             if ped_n and pd.isna(dt_nf) and pd.isna(num_nf):
-                dt_c = pd.to_datetime(row.get('Data do pedido', None), dayfirst=True, errors='coerce')
+                dt_c = pd.to_datetime(row['Data do pedido'], dayfirst=True, errors='coerce')
                 peds_aberto.append({
                     'Pedido': ped_n,
                     'Data Confecção': dt_c,
-                    'Fornecedor': row.get(col_forn_p, ''),
+                    'Fornecedor': row['Fornecedor'],
                     'Status Pedido': st_p
                 })
 
-        col_st_rel = encontrar_coluna(df_relacao_obra, ['status entrega', 'status', 'situação'])
-        col_dt_rel = encontrar_coluna(df_relacao_obra, ['data pedido', 'data'])
-
         for _, row in df_relacao_obra.iterrows():
-            st_p = str(row.get(col_st_rel, '')).strip() if col_st_rel else ""
+            st_p = str(row['Status entrega']).strip() if pd.notna(row['Status entrega']) else ""
             if "cancelado" in st_p.lower(): continue
-            ped_n = limpar_cod(row.get(col_ped_rel, ''))
+            ped_n = limpar_cod(row['Pedido'])
             dt_ent = row.get('Data Entrada NF', None)
             if ped_n and pd.isna(dt_ent):
-                dt_c = pd.to_datetime(row.get(col_dt_rel, None), dayfirst=True, errors='coerce') if col_dt_rel else None
+                dt_c = pd.to_datetime(row['Data pedido'], dayfirst=True, errors='coerce')
                 peds_aberto.append({
                     'Pedido': ped_n,
                     'Data Confecção': dt_c,
-                    'Fornecedor': row.get('Fornecedor', ''),
+                    'Fornecedor': row['Fornecedor'],
                     'Status Pedido': st_p
                 })
 
