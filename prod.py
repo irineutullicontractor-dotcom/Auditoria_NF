@@ -218,7 +218,7 @@ if st.button("🚀 Iniciar Auditoria"):
 
         # --- ABA 2: PEDIDOS ---
         peds_painel = df_painel[df_painel['Cod_Obra_Clean'] == cod_obra_alvo].groupby('CNPJ_Painel')['N° do Pedido'].apply(lambda x: list(x.dropna().astype(str))).to_dict()
-        peds_rel = df_relacao_obra.groupby('CNPJ_Forn')['Pedido'].apply(lambda x: list(x.dropna().astype(str))).to_dict()
+        peds_rel = df_relacao_obra.groupby('CNPJ_Forn')['Nº do pedido'].apply(lambda x: list(x.dropna().astype(str))).to_dict()
 
         def consolidar_pedidos_obra(cnpj):
             l1 = peds_painel.get(cnpj, [])
@@ -290,7 +290,7 @@ if st.button("🚀 Iniciar Auditoria"):
         for _, row in df_relacao_obra.iterrows():
             st_p = str(row['Status entrega']).strip() if pd.notna(row['Status entrega']) else ""
             if "cancelado" in st_p.lower(): continue
-            ped_n = limpar_cod(row['Pedido'])
+            ped_n = limpar_cod(row['Nº do pedido'])
             dt_ent = row.get('Data Entrada NF', None)
             if ped_n and pd.isna(dt_ent):
                 dt_c = pd.to_datetime(row['Data pedido'], dayfirst=True, errors='coerce')
