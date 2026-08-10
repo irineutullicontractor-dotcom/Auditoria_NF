@@ -312,48 +312,79 @@ if st.button("🚀 Iniciar Auditoria"):
 
         resumo_contratos['Pedido'] = resumo_contratos.apply(filtrar_pedidos_fin, axis=1)
 
-        # --- ABA 4: EM ABERTO ---
+        # --- ABA 4: EM ABERTO (REVISADO) ---
         peds_aberto = []
-        for _, row in df_painel[df_painel['Cod_Obra_Clean'] == cod_obra_alvo].iterrows():
-            st_p = str(row.get('Situação do pedido', '')).strip()
-            if "cancelado" in st_p.lower(): continue
-            ped_n = limpar_cod(row.get(col_ped_p, ''))
-            dt_nf = row.get('Data Emissão NF', None)
-            num_nf = row.get('N° NF', None)
-            if ped_n and pd.isna(dt_nf) and pd.isna(num_nf):
-                dt_c = pd.to_datetime(row.get('Data do pedido', None), dayfirst=True, errors='coerce')
-                peds_aberto.append({
-                    'Pedido': ped_n,
-                    'Data Confecção': dt_c,
-                    'Fornecedor': row.get(col_forn_p, ''),
-                    'Status Pedido': st_p
-                })
+        # Aceita estritamente Pendente e Parcialmente entregue (ou variações semelhantes)
+        status_validos = ['pendente', 'parcialmente']
 
+        # 1. VARRER PAINEL DE COMPRAS DA OBRA
+        col_st_p = encontrar_coluna(df_painel, ['situação do pedido', 'situação', 'status'])
+        col_dt_p = encontrar_coluna(df_painel, ['data do pedido', 'data pedido', 'emissão'])
+        col_nf_p_painel = encontrar_coluna(df_painel, ['n° da nota fiscal', 'nota fiscal', 'n° nf', 'nfe'])
+        col_forn_p_painel = encontrar_coluna(df_painel, ['fornecedor', 'credor', 'razão social'])
+
+        for _, row in df_painel[df_painel['Cod_Obra_Clean'] == cod_obra_alvo].iterrows():
+            st_p = str(row.get(col_st_p, '')).strip().lower() if col_st_p else ""
+            
+            # Filtra apenas se for 'Pendente' ou 'Parcialmente entregue'
+            if any(sv in st_p for sv in status_validos) and "totalmente" not in st_p:
+                num_nf = row.get(col_nf_p_painel, None) if col_nf_p_painel else None
+                
+                # Se NÃO tiver Nota Fiscal preenchida
+                if not campo_preenchido(num_nf):
+                    ped_n = limpar_cod(row.get(col_ped_p, ''))
+                    if ped_n:
+                        dt_c = pd.to_datetime(row.get(col_dt_p, None), dayfirst=True, errors='coerce') if col_dt_p else None
+                        forn_nome = row.get(col_forn_p_painel, '') if col_forn_p_painel else ''
+                        peds_aberto.append({
+                            'Pedido': ped_n,
+                            'Data Confecção': dt_c,
+                            'Fornecedor': forn_nome,
+                            'Status Pedido': str(row.get(col_st_p, '')).strip().capitalize()
+                        })
+
+        # 2. VARRER RELAÇÃO DE PEDIDOS DA OBRA
         col_st_rel = encontrar_coluna(df_relacao_obra, ['status entrega', 'status', 'situação'])
-        col_dt_rel = encontrar_coluna(df_relacao_obra, ['data pedido', 'data'])
+        col_dt_rel = encontrar_coluna(df_relacao_obra, ['data pedido', 'data emissao', 'emissão'])
+        col_dt_ent_rel = encontrar_coluna(df_relacao_obra, ['data entregue', 'data entrega', 'entregue'])
+        col_forn_rel_nome = encontrar_coluna(df_relacao_obra, ['fornecedor', 'credor', 'razão social'])
 
         for _, row in df_relacao_obra.iterrows():
-            st_p = str(row.get(col_st_rel, '')).strip() if col_st_rel else ""
-            if "cancelado" in st_p.lower(): continue
-            ped_n = limpar_cod(row.get(col_ped_rel, ''))
-            dt_ent = row.get('Data Entrada NF', None)
-            if ped_n and pd.isna(dt_ent):
-                dt_c = pd.to_datetime(row.get(col_dt_rel, None), dayfirst=True, errors='coerce') if col_dt_rel else None
-                peds_aberto.append({
-                    'Pedido': ped_n,
-                    'Data Confecção': dt_c,
-                    'Fornecedor': row.get('Fornecedor', ''),
-                    'Status Pedido': st_p
-                })
+            st_rel = str(row.get(col_st_rel, '')).strip().lower() if col_st_rel else ""
+            
+            # Filtra apenas se for 'Pendente' ou 'Parcialmente entregue'
+            if any(sv in st_rel for sv in status_validos) and "totalmente" not in st_rel:
+                dt_ent = row.get(col_dt_ent_rel, None) if col_dt_ent_rel else None
+                
+                # Se NÃO tiver Data Entregue preenchida
+                if not campo_preenchido(dt_ent):
+                    ped_n = limpar_cod(row.get(col_ped_rel, ''))
+                    if ped_n:
+                        dt_c = pd.to_datetime(row.get(col_dt_rel, None), dayfirst=True, errors='coerce') if col_dt_rel else None
+                        forn_nome = row.get(col_forn_rel_nome, row.get(col_forn_rel, '')) if col_forn_rel_nome else ''
+                        peds_aberto.append({
+                            'Pedido': ped_n,
+                            'Data Confecção': dt_c,
+                            'Fornecedor': forn_nome,
+                            'Status Pedido': str(row.get(col_st_rel, '')).strip().capitalize()
+                        })
 
+        # CONSOLIDAÇÃO E CÁLCULO DE DIAS EM ABERTO
         if peds_aberto:
-            df_aberto = pd.DataFrame(peds_aberto).dropna(subset=['Pedido']).groupby('Pedido').agg({
+            df_aberto = pd.DataFrame(peds_aberto).dropna(subset=['Pedido'])
+            
+            # Agrupa por pedido para evitar duplicidades entre as duas planilhas
+            df_aberto = df_aberto.groupby('Pedido').agg({
                 'Data Confecção': 'min',
                 'Fornecedor': 'first',
                 'Status Pedido': 'first'
             }).reset_index()
+
+            # Calcula Dias em Aberto: Data Atual - Data de Confecção
             df_aberto['Dias em aberto'] = (hoje - df_aberto['Data Confecção']).dt.days.fillna(0).astype(int)
             df_aberto['Data Confecção'] = df_aberto['Data Confecção'].dt.strftime('%d/%m/%Y')
+            
+            # Ordena do maior tempo de atraso/aberto para o menor
             aba4_final = df_aberto[['Pedido', 'Data Confecção', 'Fornecedor', 'Dias em aberto', 'Status Pedido']].sort_values(by='Dias em aberto', ascending=False)
         else:
             aba4_final = pd.DataFrame(columns=['Pedido', 'Data Confecção', 'Fornecedor', 'Dias em aberto', 'Status Pedido'])
