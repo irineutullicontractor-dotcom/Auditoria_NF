@@ -31,7 +31,31 @@ with col2:
     file_contrato = st.file_uploader("5. Relatório Contrato - Home / Suprimentos / Contratos e Medições / Relatórios / Contratos / Emissão de Contratos.", type=['xlsx'])
     file_titulo = st.file_uploader("6. Relatório Titulo - Home / Financeiro / Contas a Pagar / Relatórios / Títulos por Data.", type=['xlsx'])
 
-F / 38)"""
+# --- FUNÇÕES DE SANITIZAÇÃO E LIMPEZA ---
+
+def apenas_numeros(v):
+    if pd.isna(v): return ""
+    return "".join(filter(str.isdigit, str(v)))
+
+def limpar_cnpj_cpf(v):
+    num = apenas_numeros(v)
+    if not num: return ""
+    return num.zfill(14) if len(num) > 11 else num.zfill(11)
+
+def extrair_raiz_cnpj(v):
+    """Extrai os primeiros 8 dígitos do CNPJ (Matriz/Filial)"""
+    c = limpar_cnpj_cpf(v)
+    return c[:8] if len(c) >= 8 else c
+
+def limpar_cod(v):
+    if pd.isna(v): return ""
+    s = str(v).strip()
+    if " - " in s:
+        s = s.split(" - ")[0].strip()
+    return s.split('.')[0].lstrip('0')
+
+def extrair_numero_apos_barra(v):
+    """Usado para Painel (NFE/280680) e Títulos (NF/38, NF / 38)"""
     if pd.isna(v) or str(v).strip() == "" or str(v).lower() == "nan": return ""
     s = str(v).strip()
     if '/' in s:
