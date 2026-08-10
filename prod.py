@@ -42,11 +42,6 @@ def limpar_cnpj_cpf(v):
     if not num: return ""
     return num.zfill(14) if len(num) > 11 else num.zfill(11)
 
-def extrair_raiz_cnpj(v):
-    """Extrai os primeiros 8 dígitos do CNPJ (Matriz/Filial)"""
-    c = limpar_cnpj_cpf(v)
-    return c[:8] if len(c) >= 8 else c
-
 def limpar_cod(v):
     if pd.isna(v): return ""
     s = str(v).strip()
@@ -151,26 +146,28 @@ if st.button("🚀 Iniciar Auditoria"):
         # 2. CARREGAR E TRATAR NF PRODUTO
         df_nf = estruturar_nf_produto(file_nf_prod)
         df_nf['CNPJ emitente'] = df_nf['CNPJ emitente'].apply(limpar_cnpj_cpf)
-        df_nf['raiz_cnpj'] = df_nf['CNPJ emitente'].apply(extrair_raiz_cnpj)
         df_nf['nf_limpa'] = df_nf['Núm/Série'].apply(extrair_numero_antes_barra)
         df_nf['chave_unica'] = df_nf['CNPJ emitente'] + "_" + df_nf['nf_limpa']
+        
+        # Extração da Raiz do CNPJ (8 primeiros dígitos) + Número NF
+        df_nf['raiz_cnpj'] = df_nf['CNPJ emitente'].apply(lambda c: c[:8] if len(c) >= 8 else c)
         df_nf['chave_raiz'] = df_nf['raiz_cnpj'] + "_" + df_nf['nf_limpa']
 
         # 3. TRATAR PAINEL DE COMPRAS
         df_painel = carregar_df(file_painel)
         df_painel['Cod_Forn'] = df_painel['Fornecedor'].apply(limpar_cod)
         df_painel['CNPJ_Painel'] = df_painel['Cod_Forn'].map(mapa_cod_to_cnpj).fillna("")
-        df_painel['raiz_cnpj'] = df_painel['CNPJ_Painel'].apply(extrair_raiz_cnpj)
         df_painel['nf_limpa'] = df_painel['N° da Nota fiscal'].apply(extrair_numero_apos_barra)
-        
         df_painel['chave_p'] = df_painel['CNPJ_Painel'] + "_" + df_painel['nf_limpa']
-        df_painel['chave_raiz_p'] = df_painel['raiz_cnpj'] + "_" + df_painel['nf_limpa']
         df_painel['Cod_Obra_Clean'] = df_painel['Obra'].apply(limpar_cod)
+        
+        # Raiz do CNPJ no Painel
+        df_painel['raiz_cnpj'] = df_painel['CNPJ_Painel'].apply(lambda c: c[:8] if len(c) >= 8 else c)
+        df_painel['chave_p_raiz'] = df_painel['raiz_cnpj'] + "_" + df_painel['nf_limpa']
 
         # Chaves de NFs Lançadas no Painel (Global)
-        painel_com_nf = df_painel[df_painel['nf_limpa'] != ""]
-        chaves_lancadas_painel = set(painel_com_nf['chave_p'].unique())
-        chaves_raiz_painel = set(painel_com_nf['chave_raiz_p'].unique())
+        chaves_lancadas_painel = set(df_painel[df_painel['nf_limpa'] != ""]['chave_p'].unique())
+        chaves_raiz_painel = set(df_painel[df_painel['nf_limpa'] != ""]['chave_p_raiz'].unique())
 
         # 4. TRATAR TÍTULOS FINANCEIROS
         df_titulos = estruturar_titulo_limpo(file_titulo)
@@ -181,20 +178,20 @@ if st.button("🚀 Iniciar Auditoria"):
         if not df_titulos.empty:
             df_titulos['Cod_Forn'] = df_titulos['Credor'].apply(limpar_cod)
             df_titulos['CNPJ_Tit'] = df_titulos['Cod_Forn'].map(mapa_cod_to_cnpj).fillna("")
-            df_titulos['raiz_cnpj'] = df_titulos['CNPJ_Tit'].apply(extrair_raiz_cnpj)
             df_titulos['nf_limpa'] = df_titulos['Documento'].apply(extrair_numero_apos_barra)
-            
             df_titulos['chave_t'] = df_titulos['CNPJ_Tit'] + "_" + df_titulos['nf_limpa']
-            df_titulos['chave_raiz_t'] = df_titulos['raiz_cnpj'] + "_" + df_titulos['nf_limpa']
             
-            titulos_com_nf = df_titulos[df_titulos['nf_limpa'] != ""]
-            chaves_lancadas_titulos = set(titulos_com_nf['chave_t'].unique())
-            chaves_raiz_titulos = set(titulos_com_nf['chave_raiz_t'].unique())
+            # Raiz do CNPJ em Títulos
+            df_titulos['raiz_cnpj'] = df_titulos['CNPJ_Tit'].apply(lambda c: c[:8] if len(c) >= 8 else c)
+            df_titulos['chave_t_raiz'] = df_titulos['raiz_cnpj'] + "_" + df_titulos['nf_limpa']
+            
+            chaves_lancadas_titulos = set(df_titulos[df_titulos['nf_limpa'] != ""]['chave_t'].unique())
+            chaves_raiz_titulos = set(df_titulos[df_titulos['nf_limpa'] != ""]['chave_t_raiz'].unique())
             
             if 'CT/OC' in df_titulos.columns:
                 pedidos_com_nf_financeiro = set(df_titulos['CT/OC'].dropna().astype(str).apply(limpar_cod).unique())
 
-        # CHAVES GLOBAIS DE BAIXA
+        # CHAVES GLOBAIS DE BAIXA E RAIZ CNPJ
         chaves_lancadas_global = chaves_lancadas_painel.union(chaves_lancadas_titulos)
         chaves_raiz_global = chaves_raiz_painel.union(chaves_raiz_titulos)
 
@@ -207,12 +204,10 @@ if st.button("🚀 Iniciar Auditoria"):
         df_relacao_obra['Cod_Forn'] = df_relacao_obra['Cód. fornecedor'].apply(limpar_cod)
         df_relacao_obra['CNPJ_Forn'] = df_relacao_obra['Cod_Forn'].map(mapa_cod_to_cnpj).fillna("")
 
-        # CNPJs com histórico de Pedidos na Obra (CNPJ Exato e Raiz CNPJ)
+        # CNPJs com histórico de Pedidos na Obra
         cnpjs_obra_pedidos = set(df_relacao_obra['CNPJ_Forn'].dropna().unique())
         cnpjs_obra_painel = set(df_painel[df_painel['Cod_Obra_Clean'] == cod_obra_alvo]['CNPJ_Painel'].dropna().unique())
         cnpjs_com_historico_na_obra = cnpjs_obra_pedidos.union(cnpjs_obra_painel)
-        
-        raizes_com_historico_na_obra = set([extrair_raiz_cnpj(c) for c in cnpjs_com_historico_na_obra if extrair_raiz_cnpj(c) != ""])
 
         # --- ABA 1: PAINEL ---
         resumo_painel = pd.merge(
@@ -228,16 +223,19 @@ if st.button("🚀 Iniciar Auditoria"):
             col_avulsa = 'Título/Nota fiscal avulsa' if 'Título/Nota fiscal avulsa' in r else None
             if col_avulsa and pd.notna(r[col_avulsa]) and str(r[col_avulsa]).strip() != "":
                 return "✅ NF Lançada"
-            # 2. Se achou no Global por CNPJ Exato
+            
+            # 2. Se achou no Global (CNPJ Completo Exato + NF)
             if r['chave_unica'] in chaves_lancadas_global:
                 return "✅ NF Lançada"
-            # 3. VERIFICAÇÃO DE INCONSISTÊNCIA / FILIAL (Mesma raiz de CNPJ em NF lançada ou cadastrada na Obra)
-            if r['chave_raiz'] in chaves_raiz_global or r['raiz_cnpj'] in raizes_com_historico_na_obra:
-                if r['CNPJ emitente'] not in cnpjs_com_historico_na_obra:
-                    return "🚨 INCONSISTÊNCIA, VERIFICAR DADOS DO LANÇAMENTO"
+            
+            # 3. VERIFICAÇÃO DE RAIZ CNPJ (Inconsistência entre Filiais/Matriz)
+            if r['chave_raiz'] in chaves_raiz_global and r['nf_limpa'] != "":
+                return "🚨 INCONSISTÊNCIA, VERIFICAR DADOS DO LANÇAMENTO"
+            
             # 4. Regra restrita à OBRA selecionada
             if r['CNPJ emitente'] in cnpjs_com_historico_na_obra:
                 return "⚠️ Para Verificação"
+                
             return "❌ Sem Histórico"
 
         resumo_painel['Status'] = resumo_painel.apply(definir_status_painel, axis=1)
@@ -278,6 +276,8 @@ if st.button("🚀 Iniciar Auditoria"):
         def definir_status_contrato(r):
             if r['chave_unica'] in chaves_lancadas_titulos or r['Status_Ped'] == "✅ Resolvido Painel":
                 return "✅ NF Lançada"
+            if r['Status_Ped'] == "🚨 INCONSISTÊNCIA, VERIFICAR DADOS DO LANÇAMENTO":
+                return "🚨 INCONSISTÊNCIA, VERIFICAR DADOS DO LANÇAMENTO"
             if pd.notna(r['Contrato']) and str(r['Contrato']).strip() != "":
                 return "📄 Vínculo Contratual"
             return r['Status_Ped']
