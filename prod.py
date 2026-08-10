@@ -80,13 +80,12 @@ def encontrar_coluna(df, termos_busca):
     return None
 
 def campo_preenchido(val):
-    """Retorna True se houver algum valor/número/data real preenchido."""
     if pd.isna(val): return False
     s = str(val).strip().lower()
     return s not in ["", "nan", "none", "null", "0", "00/00/0000", "00/00/00"]
 
 # ==============================================================================
-# --- ESTRUTURAÇÃO E LEITURA DE ARQUIVOS ---
+# --- LEITURA DE ARQUIVOS ---
 # ==============================================================================
 
 def carregar_df(file, skiprows=0, header=0):
@@ -160,11 +159,11 @@ if st.button("🚀 Iniciar Auditoria"):
         cod_obra_alvo = limpar_cod(codigo_obra_usuario)
         hoje = pd.to_datetime(datetime.date.today())
 
-        # 1. DE-PARA GLOBAL DE FORNECEDORES
+        # 1. FORNECEDORES
         df_credor = estruturar_credor(file_forn)
         mapa_cod_to_cnpj = dict(zip(df_credor['Cod_Forn'], df_credor['CNPJ_Clean']))
 
-        # 2. NF PRODUTO
+        # 2. RELATÓRIO NF PRODUTO
         df_nf = estruturar_nf_produto(file_nf_prod)
         df_nf['CNPJ emitente'] = df_nf['CNPJ emitente'].apply(limpar_cnpj_cpf)
         df_nf['raiz_cnpj'] = df_nf['CNPJ emitente'].apply(extrair_raiz_cnpj)
@@ -190,8 +189,10 @@ if st.button("🚀 Iniciar Auditoria"):
         df_painel['chave_raiz_p'] = df_painel['raiz_cnpj'] + "_" + df_painel['nf_limpa']
         df_painel['Cod_Obra_Clean'] = df_painel[col_obra_p].apply(limpar_cod)
 
-        chaves_lancadas_painel = set(df_painel[df_painel['nf_limpa'] != ""]['chave_p'].unique())
-        chaves_raiz_painel = set(df_painel[df_painel['nf_limpa'] != ""]['chave_raiz_p'].unique())
+        # Chaves de NFs presentes no Painel (Geral)
+        painel_com_nf = df_painel[df_painel['nf_limpa'] != ""]
+        chaves_lancadas_painel = set(painel_com_nf['chave_p'].unique())
+        chaves_raiz_painel = set(painel_com_nf['chave_raiz_p'].unique())
 
         # 4. TÍTULOS FINANCEIROS
         df_titulos = estruturar_titulo_limpo(file_titulo)
@@ -208,16 +209,18 @@ if st.button("🚀 Iniciar Auditoria"):
             df_titulos['chave_t'] = df_titulos['CNPJ_Tit'] + "_" + df_titulos['nf_limpa']
             df_titulos['chave_raiz_t'] = df_titulos['raiz_cnpj'] + "_" + df_titulos['nf_limpa']
             
-            chaves_lancadas_titulos = set(df_titulos[df_titulos['nf_limpa'] != ""]['chave_t'].unique())
-            chaves_raiz_titulos = set(df_titulos[df_titulos['nf_limpa'] != ""]['chave_raiz_t'].unique())
+            titulos_com_nf = df_titulos[df_titulos['nf_limpa'] != ""]
+            chaves_lancadas_titulos = set(titulos_com_nf['chave_t'].unique())
+            chaves_raiz_titulos = set(titulos_com_nf['chave_raiz_t'].unique())
             
             if 'CT/OC' in df_titulos.columns:
                 pedidos_com_nf_financeiro = set(df_titulos['CT/OC'].dropna().astype(str).apply(limpar_cod).unique())
 
+        # CONSOLIDAÇÃO GLOBAL DE NF LANÇADAS (PAINEL + FINANCEIRO)
         chaves_lancadas_global = chaves_lancadas_painel.union(chaves_lancadas_titulos)
         chaves_raiz_global = chaves_raiz_painel.union(chaves_raiz_titulos)
 
-        # 5. HISTÓRICO DA OBRA (PEDIDOS)
+        # 5. HISTÓRICO DA OBRA
         df_relacao = carregar_df(file_relacao)
         df_relacao.columns = [str(c).strip() for c in df_relacao.columns]
 
@@ -247,13 +250,13 @@ if st.button("🚀 Iniciar Auditoria"):
             resumo_painel.rename(columns={col_nf_p: 'N° da Nota fiscal'}, inplace=True)
 
         def definir_status_painel(r):
-            col_avulsa = 'Título/Nota fiscal avulsa' if 'Título/Nota fiscal avulsa' in r else None
-            if col_avulsa and pd.notna(r[col_avulsa]) and str(r[col_avulsa]).strip() != "":
-                return "✅ NF Lançada"
+            # 1. Se foi lançada (via Painel ou Financeiro)
             if r['chave_unica'] in chaves_lancadas_global:
                 return "✅ NF Lançada"
+            # 2. Se foi lançada sob outra filial (mesma raiz CNPJ)
             if r['chave_raiz'] in chaves_raiz_global:
                 return "🚨 DIVERGÊNCIA MATRIZ/FILIAL (NF em outro CNPJ)"
+            # 3. Fornecedor possui histórico na obra
             if r['CNPJ emitente'] in cnpjs_com_historico_na_obra:
                 return "⚠️ Para Verificação"
             return "❌ Sem Histórico"
@@ -314,13 +317,10 @@ if st.button("🚀 Iniciar Auditoria"):
 
         resumo_contratos['Pedido'] = resumo_contratos.apply(filtrar_pedidos_fin, axis=1)
 
-        # ==============================================================================
         # --- ABA 4: EM ABERTO ---
-        # ==============================================================================
         peds_aberto = []
         status_validos = ['pendente', 'parcialmente']
 
-        # 1. VARRER PAINEL DE COMPRAS DA OBRA
         col_st_p = encontrar_coluna(df_painel, ['situação do pedido', 'situação', 'status'])
         col_dt_p = encontrar_coluna(df_painel, ['data do pedido', 'data pedido', 'emissão'])
         col_nf_p_painel = encontrar_coluna(df_painel, ['n° da nota fiscal', 'nota fiscal', 'n° nf', 'nfe'])
@@ -328,12 +328,8 @@ if st.button("🚀 Iniciar Auditoria"):
 
         for _, row in df_painel[df_painel['Cod_Obra_Clean'] == cod_obra_alvo].iterrows():
             st_p = str(row.get(col_st_p, '')).strip().lower() if col_st_p else ""
-            
-            # Somente Pendente ou Parcialmente entregue
             if any(sv in st_p for sv in status_validos) and "totalmente" not in st_p:
                 num_nf = row.get(col_nf_p_painel, None) if col_nf_p_painel else None
-                
-                # SE NÃO tiver Nota Fiscal preenchida
                 if not campo_preenchido(num_nf):
                     ped_n = limpar_cod(row.get(col_ped_p, ''))
                     if ped_n:
@@ -346,7 +342,6 @@ if st.button("🚀 Iniciar Auditoria"):
                             'Status Pedido': str(row.get(col_st_p, '')).strip().capitalize()
                         })
 
-        # 2. VARRER RELAÇÃO DE PEDIDOS DA OBRA
         col_st_rel = encontrar_coluna(df_relacao_obra, ['status entrega', 'status', 'situação'])
         col_dt_rel = encontrar_coluna(df_relacao_obra, ['data pedido', 'data emissao', 'emissão'])
         col_dt_ent_rel = encontrar_coluna(df_relacao_obra, ['data entregue', 'data entrega', 'entregue'])
@@ -354,12 +349,8 @@ if st.button("🚀 Iniciar Auditoria"):
 
         for _, row in df_relacao_obra.iterrows():
             st_rel = str(row.get(col_st_rel, '')).strip().lower() if col_st_rel else ""
-            
-            # Somente Pendente ou Parcialmente entregue
             if any(sv in st_rel for sv in status_validos) and "totalmente" not in st_rel:
                 dt_ent = row.get(col_dt_ent_rel, None) if col_dt_ent_rel else None
-                
-                # SE NÃO tiver Data Entregue preenchida
                 if not campo_preenchido(dt_ent):
                     ped_n = limpar_cod(row.get(col_ped_rel, ''))
                     if ped_n:
@@ -372,10 +363,8 @@ if st.button("🚀 Iniciar Auditoria"):
                             'Status Pedido': str(row.get(col_st_rel, '')).strip().capitalize()
                         })
 
-        # CONSOLIDAÇÃO DA ABA 4
         if peds_aberto:
             df_aberto = pd.DataFrame(peds_aberto).dropna(subset=['Pedido'])
-            
             df_aberto = df_aberto.groupby('Pedido').agg({
                 'Data Confecção': 'min',
                 'Fornecedor': 'first',
@@ -388,7 +377,7 @@ if st.button("🚀 Iniciar Auditoria"):
         else:
             aba4_final = pd.DataFrame(columns=['Pedido', 'Data Confecção', 'Fornecedor', 'Dias em aberto', 'Status Pedido'])
 
-        # --- EXPORTAÇÃO FINAL ---
+        # EXPORTAÇÃO
         cols_base = ['Núm/Série', 'CNPJ emitente', 'Emitente', 'Emissão', 'Valor']
         cols_extra = ['CNPJ Destinatário', 'Destinatário']
 
