@@ -125,7 +125,7 @@ if st.button("🚀 Processar Auditoria"):
         mapa_cod_to_cnpj = dict(zip(df_credor['Cod_Forn'], df_credor['CNPJ_Clean']))
         mapa_cnpj_to_cod = dict(zip(df_credor['CNPJ_Clean'], df_credor['Cod_Forn']))
 
-        # 2. CARREGAR E TRATAR NF SERVIÇO (Colunas posicionais A, B, D, E, H)
+        # 2. CARREGAR E TRATAR NF SERVIÇO (Colunas A, B, D, E, H e AN para Situação)
         df_nf_raw = carregar_df(file_nf)
         
         df_nf = pd.DataFrame()
@@ -134,6 +134,12 @@ if st.button("🚀 Processar Auditoria"):
         df_nf['CNPJ emitente'] = df_nf_raw.iloc[:, 3].astype(str).apply(limpar_cnpj_cpf) # Coluna D: CNPJ Prestador
         df_nf['Emitente'] = df_nf_raw.iloc[:, 4]                               # Coluna E: Nome Prestador
         df_nf['Valor'] = df_nf_raw.iloc[:, 7]                                  # Coluna H: Valor (R$)
+        
+        # Coluna AN (Índice 39): Situação (Normal, Cancelada, Substituída)
+        if df_nf_raw.shape[1] > 39:
+            df_nf['Situacao'] = df_nf_raw.iloc[:, 39].astype(str).str.strip()
+        else:
+            df_nf['Situacao'] = "Normal"
 
         df_nf['nf_limpa'] = df_nf['Núm/Série_Raw'].apply(extrair_numero_nf_servico_real)
         df_nf['Núm/Série'] = df_nf['nf_limpa']
@@ -261,6 +267,14 @@ if st.button("🚀 Processar Auditoria"):
         titulos_map = df_titulos[['chave_t', 'Documento']].drop_duplicates('chave_t').set_index('chave_t')['Documento'].to_dict() if not df_titulos.empty else {}
 
         def definir_status_contrato(r):
+            # Regra para NF Cancelada ou Substituída
+            sit = str(r.get('Situacao', '')).strip().lower()
+            if 'cancelada' in sit:
+                return "❌ NF Cancelada"
+            if 'substituída' in sit or 'substituida' in sit:
+                return "🔄 NF Substituída"
+
+            # Regras originais mantidas
             if r['chave_unica'] in chaves_lancadas_titulos or r['Status_Ped'] == "✅ Resolvido Painel":
                 return "✅ NF Lançada"
             if r['Status_Ped'] == "🚨 INCONSISTÊNCIA, VERIFICAR DADOS DO LANÇAMENTO":
@@ -275,7 +289,7 @@ if st.button("🚀 Processar Auditoria"):
         )
 
         def filtrar_pedidos_fin(r):
-            if r['Status_CT'] in ["✅ Resolvido Painel", "✅ NF Lançada"]:
+            if r['Status_CT'] in ["✅ Resolvido Painel", "✅ NF Lançada", "❌ NF Cancelada", "🔄 NF Substituída"]:
                 return r['Pedido']
             peds = [p.strip() for p in str(r['Pedido']).split(',') if p.strip()]
             em_aberto = [p for p in peds if p not in pedidos_com_nf_financeiro]
